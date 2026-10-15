@@ -211,6 +211,23 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
   return data as T;
 }
+function reportClientError(error: {
+  type: 'error' | 'unhandledrejection' | 'resource';
+  message: string;
+  stack?: string;
+  source?: string;
+  path?: string;
+  status?: number;
+  line?: number;
+  column?: number;
+}) {
+  void fetch('/api/v1/client-errors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(error),
+    keepalive: true
+  }).catch((failure: unknown) => console.warn('Unable to send ERP client error report.', failure));
+}
 function toast(message: string, isError = false) {
   let area = $('.toast-area');
   if (!area) {
@@ -224,6 +241,36 @@ function toast(message: string, isError = false) {
   area.append(item);
   window.setTimeout(() => item.remove(), 3600);
 }
+window.addEventListener('error', (event: ErrorEvent) => {
+  const target = event.target;
+  if (target instanceof HTMLScriptElement || target instanceof HTMLLinkElement) {
+    reportClientError({
+      type: 'resource',
+      message: 'A page resource failed to load.',
+      source: target instanceof HTMLScriptElement ? target.src : target.href,
+      path: window.location.pathname
+    });
+    return;
+  }
+  reportClientError({
+    type: 'error',
+    message: event.message || 'Uncaught browser error.',
+    ...(event.error instanceof Error && event.error.stack ? { stack: event.error.stack } : {}),
+    ...(event.filename ? { source: event.filename } : {}),
+    path: window.location.pathname,
+    ...(event.lineno ? { line: event.lineno } : {}),
+    ...(event.colno ? { column: event.colno } : {})
+  });
+});
+window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+  const reason = event.reason;
+  reportClientError({
+    type: 'unhandledrejection',
+    message: reason instanceof Error ? reason.message : String(reason),
+    ...(reason instanceof Error && reason.stack ? { stack: reason.stack } : {}),
+    path: window.location.pathname
+  });
+});
 function can(permission: string) { return Boolean(profile?.permissions.includes(permission)); }
 function navItems(): { page: Page; title: string; icon: string; permission?: string }[] {
   const items: { page: Page; title: string; icon: string; permission?: string }[] = [

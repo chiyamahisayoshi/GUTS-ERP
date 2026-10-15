@@ -35,11 +35,18 @@ function removeFile(filePath) {
 
 function safePath(path) {
   if (typeof path !== 'string') return '/unmatched';
-  const pathname = path.split(/[?#]/, 1)[0]
-    .replace(/[\u0000-\u001f\u007f]/g, '')
+  return safeText(path.split(/[?#]/, 1)[0], 256) || '/';
+}
+
+function safeText(value, maxLength) {
+  if (typeof value !== 'string') return undefined;
+  return value
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
     .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED]')
-    .slice(0, 256);
-  return pathname || '/';
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\b(Basic)\s+[A-Za-z0-9+/=]+/gi, '$1 [REDACTED]')
+    .replace(/(["']?(?:authorization|cookie|set-cookie|password|passwd|secret|token|api[_-]?key)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .slice(0, maxLength);
 }
 
 export function createErrorLogger({ filePath, consoleImpl = console } = {}) {
@@ -55,15 +62,28 @@ export function createErrorLogger({ filePath, consoleImpl = console } = {}) {
     consoleImpl.error('Unable to write ERP error log:', error.code || 'filesystem_error');
   }
 
-  function record({ method, path, code } = {}) {
+  function record({
+    method, path, code, message, stack, source, type, status, line: lineNumber, column
+  } = {}) {
     const safeCode = Object.hasOwn(ERROR_MESSAGES, code) ? code : 'internal_error';
     const record = {
       timestamp: new Date().toISOString(),
       method: typeof method === 'string' && /^[A-Z]{1,10}$/.test(method) ? method : 'UNKNOWN',
       path: safePath(path),
       code: safeCode,
-      message: ERROR_MESSAGES[safeCode]
+      message: safeText(message, 2000) || ERROR_MESSAGES[safeCode]
     };
+    const safeStack = safeText(stack, 8000);
+    const safeSource = typeof source === 'string'
+      ? safeText(source.split(/[?#]/, 1)[0], 1000)
+      : undefined;
+    const safeType = safeText(type, 80);
+    if (safeStack) record.stack = safeStack;
+    if (safeSource) record.source = safeSource;
+    if (safeType) record.type = safeType;
+    if (Number.isInteger(status) && status >= 100 && status <= 599) record.status = status;
+    if (Number.isInteger(lineNumber) && lineNumber >= 0) record.line = lineNumber;
+    if (Number.isInteger(column) && column >= 0) record.column = column;
     const line = `${JSON.stringify(record)}\n`;
     const incomingBytes = Buffer.byteLength(line);
 

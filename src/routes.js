@@ -69,8 +69,22 @@ function requirePermissions(permissions, { headquartersOnly = false } = {}) {
 }
 
 export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth,
-  parkingBoard, parkingRealtime }, errorLogger) {
-  app.get('/health', async () => ({ status: 'ok' }));
+  parkingBoard, parkingRealtime }, errorLogger, databaseHealth) {
+  app.get('/health', async (_request, reply) => {
+    try {
+      if (databaseHealth) await databaseHealth();
+      return { status: 'ok' };
+    } catch (error) {
+      errorLogger.record({
+        method: 'GET',
+        path: '/health',
+        code: 'internal_error',
+        message: error.message,
+        stack: error.stack
+      });
+      return reply.code(503).send({ status: 'unavailable' });
+    }
+  });
 
   app.get('/api/v1/parking/bootstrap', {
     preHandler: requirePermission('parking:read')
@@ -665,7 +679,8 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
         return reply.code(422).send({ error: 'invalid_request' });
       }
       errorLogger.record({
-        method: request.method, path: request.routeOptions.url, code: 'internal_error'
+        method: request.method, path: request.routeOptions.url, code: 'internal_error',
+        message: error.message, stack: error.stack
       });
       return reply.code(500).send({ error: 'internal_error' });
     }
@@ -700,7 +715,10 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
       if (error.code === 'PARKING_INVALID_REFERENCE') {
         return reply.code(422).send({ error: 'invalid_reference' });
       }
-      errorLogger.record({ method: request.method, path: request.routeOptions.url, code: 'internal_error' });
+      errorLogger.record({
+        method: request.method, path: request.routeOptions.url, code: 'internal_error',
+        message: error.message, stack: error.stack
+      });
       return reply.code(500).send({ error: 'internal_error' });
     }
   });
@@ -763,7 +781,9 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
       errorLogger.record({
         method: request.method,
         path: request.routeOptions.url,
-        code: 'internal_error'
+        code: 'internal_error',
+        message: error.message,
+        stack: error.stack
       });
       return reply.code(500).send({ error: 'internal_error' });
     }

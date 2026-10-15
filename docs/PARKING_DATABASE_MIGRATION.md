@@ -8,6 +8,12 @@ or deleted by the importer.
 
 ## What the import does
 
+This is only a one-time transfer for an existing Parking SQLite database. A
+new or empty ERP deployment does not have legacy records to import: run ERP
+migrations and create ERP accounts, then use the integrated parking board
+against the same ERP MySQL database. Do not create a second parking database
+or run this importer for an empty ERP.
+
 - Copies board locations, vehicles, statuses and assignments, assessment fields
   and values, damage types and markers, options, jobs, vehicle classes, stores,
   and distance settings into `parking_*` tables in the configured ERP MySQL

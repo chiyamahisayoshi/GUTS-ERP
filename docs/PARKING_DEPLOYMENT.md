@@ -13,15 +13,21 @@
    `PUBLIC_BASE_URL` を設定してください。
 2. `npm ci` と `npm run migrate` を実行します。Migration `003_parking_mysql.sql` は
    ERPアカウントの権限カタログへ `parking:read`、`parking:write`、`parking:admin` を
-   追加します。初回セットアップでは続けて `npm run seed:admin` を実行してください。
+   追加します。
    `headquarters_admin` に3権限が付与されます。その他の役割には「役割」画面で必要な
    駐車権限を割り当てます。
-3. 既存Parkingデータを移行する場合、先に
+3. VPSが空の新規ERPなら、Parking SQLiteのimportは不要です。駐車場ボードも同じERP
+   MySQLとERPアカウントを使います。既存ParkingのSQLiteデータがある場合だけ、先に
    [PARKING_DATABASE_MIGRATION.md](PARKING_DATABASE_MIGRATION.md) の手順でマッピングを
    作成し、preflight・バックアップ・明示的な `--apply` を実行します。旧Parkingの
    各テナントは異なるERP拠点へ明示的に対応付けます。旧パスワードは移行しません。
-4. `npm run typecheck`、`npm run build`、`npm test` を実行してから ERP のみを起動します。
+4. 初期ERPアカウントは `npm run seed:admin` で作成し、スタッフと権限はERPのアカウント/
+   役割管理で運用します。Parking専用のアカウントシステムはありません。
+5. `npm run typecheck`、`npm run build`、`npm test` を実行してから ERP のみを起動します。
    `deploy/erp.sh` と `ecosystem.config.cjs` は ERP プロセスだけを管理します。
+6. 空の本番DBでは `/health` が200を返すこと、ERPログインで作成したスタッフが割り当てられた
+   拠点とParking権限だけを使えること、エラー発生時にログが書き込まれることを確認します。
+   バックアップを別DBへ復元できることも本番Goの必須条件です。
 
 ## 既存のParkingサーバーから切り替える
 
@@ -36,7 +42,7 @@ PM2プロセスは切り替え完了後に停止しても、データファイ�
 ください。復旧時は旧アプリと原本を使う前に、ERP側で切替後に行われた更新をどう扱うか
 確認してください。両方を同時に利用すると別々の更新が発生するため、二重稼働はしません。
 
-### 本番切替のGo/No-Goチェック
+### 既存Parkingデータを移行する場合の本番切替Go/No-Goチェック
 
 以下がすべて完了するまで旧Parkingを停止・削除せず、本番切替を承認しないでください。
 
@@ -92,5 +98,8 @@ ERPのWebSocketは短命・一回限りのERP JWT ticketを検証し、接続を
 
 通常の `erp update`、`erp status`、`erp logs`、`erp restart` コマンドがERPプロセスだけを
 対象にします。旧 `guts-parking` PM2プロセスが残る場合は、移行を検証してから運用者が
-個別に停止してください。ERPエラー、MySQL接続、`/health`、WebSocket upgradeを確認し、
+個別に停止してください。`/health` はMySQL接続も確認し、DB障害時は503を返します。
+ERPのサーバー5xxとブラウザー実行時エラーは `.runtime/erp-errors.log`（`ERP_ERROR_LOG_PATH`
+で変更可能）に記録されます。ログは機密値をマスクし、最大1 MiBの現行+ローテート各1個を
+保持します。VPS上でのログ書込権限、rotation、MySQL復旧、バックアップ復元を実地確認し、
 各migrationは一度適用した後に編集せず、新しい番号のmigrationを追加します。
