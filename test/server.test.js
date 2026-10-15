@@ -7,10 +7,17 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   const app = await buildApp({
     logger: false,
     errorLogger: { record: (entry) => loggedErrors.push(entry) },
-    pool: { execute: async () => { throw new Error('unexpected database access'); }, end: async () => {} },
+    pool: {
+      execute: async (sql) => {
+        if (sql === 'SELECT 1') return [[], []];
+        throw new Error('unexpected database access');
+      },
+      end: async () => {}
+    },
     config: {
       host: '127.0.0.1',
       port: 3000,
+      publicBaseUrl: 'https://erp.example.test',
       database: {},
       jwt: {
         secret: 'test-secret-with-at-least-thirty-two-bytes-long',
@@ -83,6 +90,7 @@ test('login failures stay quiet while unexpected server errors are recorded safe
     config: {
       host: '127.0.0.1',
       port: 3000,
+      publicBaseUrl: 'https://erp.example.test',
       database: {},
       jwt: {
         secret: 'test-secret-with-at-least-thirty-two-bytes-long',
@@ -112,10 +120,99 @@ test('login failures stay quiet while unexpected server errors are recorded safe
     headers: { authorization: `Bearer ${token}` }
   });
   assert.equal(failure.statusCode, 500);
+  assert.equal(loggedErrors.length, 1);
+  assert.equal(loggedErrors[0].method, 'GET');
+  assert.equal(loggedErrors[0].path, '/api/v1/dashboard/stats');
+  assert.equal(loggedErrors[0].code, 'internal_error');
+  assert.equal(typeof loggedErrors[0].message, 'string');
+  assert.match(loggedErrors[0].stack, /Error:/);
+});
+
+test('client runtime errors require same-origin requests and forward diagnostic details', async (t) => {
+  const loggedErrors = [];
+  const app = await buildApp({
+    logger: false,
+    errorLogger: { record: (entry) => loggedErrors.push(entry) },
+    pool: { execute: async (sql) => sql === 'SELECT 1' ? [[], []] : [[], []], end: async () => {} },
+    config: {
+      host: '127.0.0.1',
+      port: 3000,
+      publicBaseUrl: 'https://erp.example.test',
+      database: {},
+      jwt: {
+        secret: 'test-secret-with-at-least-thirty-two-bytes-long',
+        issuer: 'guts-erp-test',
+        audience: 'guts-parking-test',
+        expiresIn: 300
+      }
+    }
+  });
+  t.after(() => app.close());
+
+  const report = {
+    type: 'unhandledrejection',
+    message: 'fetch failed with token="hidden-token"',
+    stack: 'Error: failed\n at run (app.js:2:4)',
+    path: '/parking'
+  };
+  const rejected = await app.inject({
+    method: 'POST',
+    url: '/api/v1/client-errors',
+    headers: { origin: 'https://attacker.example' },
+    payload: report
+  });
+  assert.equal(rejected.statusCode, 403);
+  assert.deepEqual(loggedErrors, []);
+
+  const accepted = await app.inject({
+    method: 'POST',
+    url: '/api/v1/client-errors',
+    headers: { origin: 'https://erp.example.test' },
+    payload: report
+  });
+  assert.equal(accepted.statusCode, 202);
   assert.deepEqual(loggedErrors, [{
-    method: 'GET',
-    path: '/api/v1/dashboard/stats',
-    code: 'internal_error'
+    method: 'CLIENT',
+    path: '/parking',
+    code: 'internal_error',
+    message: 'fetch failed with token="hidden-token"',
+    stack: 'Error: failed\n at run (app.js:2:4)',
+    source: undefined,
+    type: 'unhandledrejection',
+    status: undefined,
+    line: undefined,
+    column: undefined
   }]);
-  assert.ok(!JSON.stringify(loggedErrors).includes('secret'));
+});
+
+test('health check reports database outages and records their diagnostic details', async (t) => {
+  const loggedErrors = [];
+  const app = await buildApp({
+    logger: false,
+    errorLogger: { record: (entry) => loggedErrors.push(entry) },
+    pool: {
+      execute: async () => { throw new Error('synthetic database unavailable'); },
+      end: async () => {}
+    },
+    config: {
+      host: '127.0.0.1',
+      port: 3000,
+      publicBaseUrl: 'https://erp.example.test',
+      database: {},
+      jwt: {
+        secret: 'test-secret-with-at-least-thirty-two-bytes-long',
+        issuer: 'guts-erp-test',
+        audience: 'guts-parking-test',
+        expiresIn: 300
+      }
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({ method: 'GET', url: '/health' });
+  assert.equal(response.statusCode, 503);
+  assert.deepEqual(response.json(), { status: 'unavailable' });
+  assert.equal(loggedErrors[0].path, '/health');
+  assert.equal(loggedErrors[0].message, 'synthetic database unavailable');
+  assert.match(loggedErrors[0].stack, /synthetic database unavailable/);
 });

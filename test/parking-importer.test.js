@@ -207,6 +207,29 @@ test('preflight rejects reused ERP vehicle mappings and reports unmatched vehicl
   }), /mapped more than once/);
 });
 
+test('preflight rejects duplicate external vehicle IDs at the mapped site', async () => {
+  const snapshot = readParkingSnapshot(sourcePath);
+  const duplicateSnapshot = {
+    ...snapshot,
+    tables: snapshot.tables.map((table) => ({
+      ...table,
+      rows: table.rows.map((row) => ({ ...row }))
+    }))
+  };
+  const vehicles = duplicateSnapshot.tables.find((table) => table.source === 'vehicles').rows;
+  vehicles[1].external_id = vehicles[0].external_id;
+
+  await assert.rejects(validateImportMapping({
+    snapshot: duplicateSnapshot,
+    mapping: { tenants: { '1': '3' }, accounts: { '1:7': '20' } },
+    query: databaseQuery({
+      sites: [{ id: '3', status: 'active' }],
+      accounts: [{ id: '20', site_id: '3', status: 'active' }],
+      vehicles: []
+    })
+  }), /Duplicate external_id in vehicles at ERP site 3/);
+});
+
 test('source preflight rejects cross-tenant vehicle-to-location references', () => {
   const snapshot = readParkingSnapshot(sourcePath);
   const copiedSnapshot = {

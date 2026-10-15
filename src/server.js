@@ -81,7 +81,52 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
     .header('Cache-Control', 'public, max-age=86400')
     .send(icon));
 
-  const db = createMysqlRepository(pool || createPool(config.database));
+  app.post('/api/v1/client-errors', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['type', 'message'],
+        properties: {
+          type: { type: 'string', enum: ['error', 'unhandledrejection', 'resource'] },
+          message: { type: 'string', minLength: 1, maxLength: 2000 },
+          stack: { type: 'string', maxLength: 8000 },
+          source: { type: 'string', maxLength: 1000 },
+          path: { type: 'string', maxLength: 300 },
+          status: { type: 'integer', minimum: 100, maximum: 599 },
+          line: { type: 'integer', minimum: 0 },
+          column: { type: 'integer', minimum: 0 }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    let origin;
+    try {
+      origin = new URL(request.headers.origin || '').origin;
+    } catch {
+      return reply.code(403).send({ error: 'same_origin_required' });
+    }
+    if (origin !== new URL(config.publicBaseUrl).origin) {
+      return reply.code(403).send({ error: 'same_origin_required' });
+    }
+    errors.record({
+      method: 'CLIENT',
+      path: request.body.path || '/',
+      code: 'internal_error',
+      message: request.body.message,
+      stack: request.body.stack,
+      source: request.body.source,
+      type: request.body.type,
+      status: request.body.status,
+      line: request.body.line,
+      column: request.body.column
+    });
+    return reply.code(202).send();
+  });
+
+  const mysqlPool = pool || createPool(config.database);
+  const db = createMysqlRepository(mysqlPool);
   const accounts = createAccountRepository(db);
   const admin = createAdminRepository(db);
   const vehicles = createVehicleRepository(db);
@@ -90,7 +135,7 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
   const auth = createAuthService({ accounts, jwt: app.jwt, config });
   registerRoutes(app, {
     accounts, admin, vehicles, reservations, auth, parkingBoard, parkingRealtime
-  }, errors);
+  }, errors, () => mysqlPool.execute('SELECT 1'));
 
   app.setErrorHandler((error, request, reply) => {
     if (error.validation) {
@@ -114,7 +159,9 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
     errors.record({
       method: request.method,
       path: request.routeOptions.url || '/unmatched',
-      code: 'internal_error'
+      code: 'internal_error',
+      message: error.message,
+      stack: error.stack
     });
     return reply.code(500).send({ error: 'internal_error' });
   });

@@ -7,6 +7,9 @@ claim that a production data migration or cutover has been completed.
 
 - Parking board routes and persistence use `parking_*` tables in the ERP MySQL
   schema, the ERP account/JWT, stable parking permissions, and ERP site scope.
+- ERP account administration is the only account system. Legacy Parking
+  passwords are intentionally not imported; users receive ERP accounts and
+  parking permissions through the ERP role/site administration.
 - Parking includes board vehicles and status assignments, areas and map
   layouts, statuses, vehicle classes/options, stores/distances, jobs,
   assessment values, damage types and vehicle damage markers, plus site-scoped
@@ -18,6 +21,13 @@ claim that a production data migration or cutover has been completed.
   preflight and dry-run, creates a source backup before writes, imports in a
   MySQL transaction, checks IDs/row counts, and does not copy legacy passwords
   or modify/delete the source SQLite database.
+- The SQLite importer is only for transferring an existing legacy Parking
+  database. A new/empty ERP deployment already uses the same ERP MySQL database
+  for parking and must not run the importer.
+- Server 5xx and explicitly caught parking failures retain sanitized messages
+  and stack traces in the rotated ERP error log. The same-origin, rate-limited
+  client error endpoint captures browser exceptions, unhandled promise
+  rejections, and failed page resources. `/health` checks MySQL connectivity.
 - ERP serves a PWA manifest and an app-shell-only service worker. It never
   caches API responses or authenticated business data; data operations require
   a network connection.
@@ -35,7 +45,21 @@ claim that a production data migration or cutover has been completed.
 
 These checks use test doubles and do not constitute a real MySQL migration.
 
-## Required before production cutover
+## Production readiness boundary
+
+For a new empty ERP installation, no SQLite import or account migration is
+needed. Before opening it to users, run migrations, create the initial ERP
+administrator, verify MySQL-backed `/health`, HTTPS and WebSocket routing, ERP
+login/parking permissions, and acceptance checks for each site. Confirm that
+database backup and restore procedures are operational.
+
+For this empty-ERP path, Go requires all checks above to pass. A failed database
+health check returns HTTP 503 and is written to the error log. Do not treat an
+unavailable production VPS/database as verified by local tests.
+
+For an existing Parking installation, also complete the legacy-data checks
+below. Do not call either path production-ready based only on automated tests;
+no production VPS or live target database was available in this workspace.
 
 - Run migrations, importer preflight/apply, row-count and ID-fidelity checks,
   permission/site-isolation checks, backup restore, and rollback rehearsal

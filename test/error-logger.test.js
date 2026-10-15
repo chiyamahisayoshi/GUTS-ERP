@@ -48,6 +48,32 @@ test('error records contain only safe fields and omit query strings and arbitrar
   }
 });
 
+test('error records retain sanitized diagnostics for root-cause analysis', (t) => {
+  const directory = makeTempDirectory(t);
+  const filePath = join(directory, 'errors.jsonl');
+  const logger = createErrorLogger({ filePath });
+  logger.record({
+    method: 'POST',
+    path: '/api/v1/client-errors?access_token=hidden',
+    code: 'internal_error',
+    message: 'Request failed with password="hidden-password"',
+    stack: 'Error: failed\n  at run (https://example.test/app.js?token=hidden-token)',
+    source: 'https://example.test/app.js?session=hidden',
+    type: 'unhandledrejection',
+    line: 17,
+    column: 4
+  });
+
+  const record = JSON.parse(readFileSync(filePath, 'utf8').trim());
+  assert.equal(record.message, 'Request failed with password=[REDACTED]');
+  assert.match(record.stack, /token=\[REDACTED\]/);
+  assert.equal(record.source, 'https://example.test/app.js');
+  assert.equal(record.type, 'unhandledrejection');
+  assert.equal(record.line, 17);
+  assert.equal(record.column, 4);
+  assert.ok(!JSON.stringify(record).includes('hidden'));
+});
+
 test('error logs rotate at 1 MiB and retain no more than two files', (t) => {
   const directory = makeTempDirectory(t);
   const filePath = join(directory, 'errors.jsonl');

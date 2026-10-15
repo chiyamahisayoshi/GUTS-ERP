@@ -304,11 +304,13 @@ export async function validateImportMapping({ snapshot, mapping, query }) {
       }
     }
   }
+  const externalVehicleIds = new Set();
   for (const vehicle of vehicleSourceRows) {
     if (vehicle.external_id === null || vehicle.external_id === undefined) continue;
-    const key = `${tenantSites.get(String(vehicle.tenant_id))}:external_id:${vehicle.external_id}`;
-    if (mappedVehicles.has(key)) fail(`Duplicate external_id in vehicles at ERP site ${tenantSites.get(String(vehicle.tenant_id))}.`);
-    mappedVehicles.add(key);
+    const siteId = tenantSites.get(String(vehicle.tenant_id));
+    const key = `${siteId}:${String(vehicle.external_id).normalize('NFKC').toLocaleLowerCase('en-US')}`;
+    if (externalVehicleIds.has(key)) fail(`Duplicate external_id in vehicles at ERP site ${siteId}.`);
+    externalVehicleIds.add(key);
   }
   return { tenantSites, accountMap, vehicleMap };
 }
