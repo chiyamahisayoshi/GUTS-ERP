@@ -11,11 +11,7 @@ import { dirname, resolve } from 'node:path';
 export const MAX_ERROR_LOG_FILE_BYTES = 1024 * 1024;
 
 const ERROR_MESSAGES = Object.freeze({
-  internal_error: 'Unhandled server error',
-  parking_not_configured: 'Parking integration is not configured',
-  parking_unavailable: 'Parking integration is unavailable',
-  parking_upstream_error: 'Parking integration returned an error',
-  parking_invalid_response: 'Parking integration returned an invalid response'
+  internal_error: 'Unhandled server error'
 });
 
 function statFile(filePath) {

@@ -44,6 +44,20 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   assert.equal(styles.statusCode, 200);
   assert.match(styles.headers['content-type'], /text\/css/);
 
+  const manifest = await app.inject({ method: 'GET', url: '/manifest.webmanifest' });
+  assert.equal(manifest.statusCode, 200);
+  assert.equal(manifest.json().start_url, '/');
+  assert.deepEqual(manifest.json().icons[0].src, '/icon.svg');
+  const serviceWorker = await app.inject({ method: 'GET', url: '/sw.js' });
+  assert.equal(serviceWorker.statusCode, 200);
+  assert.match(serviceWorker.headers['service-worker-allowed'], /^\//);
+  assert.match(serviceWorker.headers['cache-control'], /no-cache/);
+  assert.match(serviceWorker.body, /SHELL_PATHS\.has\(url\.pathname\)/);
+  assert.doesNotMatch(serviceWorker.body, /\/api\/v1/);
+  const icon = await app.inject({ method: 'GET', url: '/icon.svg' });
+  assert.equal(icon.statusCode, 200);
+  assert.match(icon.headers['content-type'], /image\/svg\+xml/);
+
   const unauthorized = await app.inject({
     method: 'GET',
     url: '/api/v1/auth/me',
