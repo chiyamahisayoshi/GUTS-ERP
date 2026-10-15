@@ -22,6 +22,10 @@ try {
     [username]
   );
   if (existing.length) throw new Error('Admin username already exists; refusing to reset it.');
+  const [ownerAdmins] = await connection.execute(
+    'SELECT id FROM accounts WHERE is_owner_admin = 1 LIMIT 1 FOR UPDATE'
+  );
+  if (ownerAdmins.length) throw new Error('An owner administrator already exists; refusing to create another.');
 
   await connection.execute(
     `INSERT INTO sites (code, name, type) VALUES (?, ?, 'headquarters')
@@ -54,7 +58,8 @@ try {
   }
   const passwordHash = await bcrypt.hash(password, 12);
   const [accountResult] = await connection.execute(
-    'INSERT INTO accounts (site_id, username, display_name, password_hash) VALUES (?, ?, ?, ?)',
+    `INSERT INTO accounts (site_id, username, display_name, password_hash, is_owner_admin)
+     VALUES (?, ?, ?, ?, 1)`,
     [site.id, username, displayName, passwordHash]
   );
   await connection.execute(

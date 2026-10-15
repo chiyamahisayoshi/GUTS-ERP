@@ -1,6 +1,6 @@
 # GUTS-ERP
 
-**版本：0.3.3**
+**版本：0.4.0**
 
 ## 新 VPS 部署（Debian 12 + 宝塔）
 
@@ -54,6 +54,6 @@ erp logs
 
 ## 版本号规则
 
-每次发布都更新版本号：兼容性 bug 修复增加 patch（例如 `0.3.2` → `0.3.3`），后向兼容的
-功能更新增加 minor，破坏兼容性的更新增加 major。`package.json` 和 `package-lock.json`
+每次发布都更新版本号：兼容性 bug 修复增加 patch，后向兼容的功能更新增加 minor（例如
+`0.3.3` → `0.4.0`），破坏兼容性的更新增加 major。`package.json` 和 `package-lock.json`
 中的版本必须保持一致。
