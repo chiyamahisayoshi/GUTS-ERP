@@ -27,30 +27,6 @@ export function getConfig() {
   const databasePort = Number.parseInt(process.env.DB_PORT || '3306', 10);
   const connectionLimit = Number.parseInt(process.env.DB_POOL_SIZE || '10', 10);
   const jwtTtlSeconds = Number.parseInt(process.env.JWT_TTL_SECONDS || '3600', 10);
-  const parkingApiUrl = process.env.PARKING_API_URL || '';
-  const parkingApiKey = process.env.PARKING_API_KEY || '';
-  if (Boolean(parkingApiUrl) !== Boolean(parkingApiKey)) {
-    throw new Error('PARKING_API_URL and PARKING_API_KEY must be configured together');
-  }
-  if (parkingApiUrl) {
-    const parsedParkingUrl = new URL(parkingApiUrl);
-    const isLocalHttp = parsedParkingUrl.protocol === 'http:' &&
-      ['127.0.0.1', 'localhost', '[::1]'].includes(parsedParkingUrl.hostname);
-    if ((!isLocalHttp && parsedParkingUrl.protocol !== 'https:') || parsedParkingUrl.username ||
-        parsedParkingUrl.password || parsedParkingUrl.search || parsedParkingUrl.hash) {
-      throw new Error('PARKING_API_URL must use HTTPS, except for HTTP on the local machine');
-    }
-    if (Buffer.byteLength(parkingApiKey) < 32) {
-      throw new Error('PARKING_API_KEY must be at least 32 bytes');
-    }
-  }
-  const parkingBackendUrl = process.env.PARKING_BACKEND_URL || 'http://127.0.0.1:8001';
-  const parsedParkingBackendUrl = new URL(parkingBackendUrl);
-  if (parsedParkingBackendUrl.protocol !== 'http:' ||
-      !['127.0.0.1', 'localhost', '[::1]'].includes(parsedParkingBackendUrl.hostname) ||
-      parsedParkingBackendUrl.username || parsedParkingBackendUrl.password) {
-    throw new Error('PARKING_BACKEND_URL must use HTTP on the local machine');
-  }
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535');
   if (!Number.isInteger(databasePort) || databasePort < 1 || databasePort > 65535) {
     throw new Error('DB_PORT must be between 1 and 65535');
@@ -75,15 +51,10 @@ export function getConfig() {
       database: process.env.DB_NAME || 'guts_erp',
       connectionLimit
     },
-    parking: {
-      apiUrl: parkingApiUrl,
-      apiKey: parkingApiKey,
-      backendUrl: parsedParkingBackendUrl.origin
-    },
     jwt: {
       secret: jwtSecret,
       issuer: process.env.JWT_ISSUER || 'guts-erp',
-      audience: process.env.JWT_AUDIENCE || 'guts-parking',
+      audience: process.env.JWT_AUDIENCE || 'guts-erp',
       expiresIn: jwtTtlSeconds
     }
   };

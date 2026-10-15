@@ -7,16 +7,10 @@ cd "$APP_DIR"
 
 install_dependencies() {
   npm ci --omit=dev
-  if [ -f apps/parking/.env ]; then
-    npm ci --omit=dev --prefix apps/parking
-  fi
 }
 
 reload_services() {
   pm2 reload ecosystem.config.cjs --update-env
-  if [ -f apps/parking/.env ]; then
-    pm2 startOrReload apps/parking/ecosystem.config.cjs --update-env
-  fi
 }
 
 case "${1:-help}" in
@@ -44,10 +38,7 @@ case "${1:-help}" in
     ;;
   status) pm2 status; curl -fsS http://127.0.0.1:3000/health && echo ;;
   logs) pm2 logs guts-erp --lines "${2:-100}" ;;
-  restart)
-    pm2 restart guts-erp --update-env
-    if [ -f apps/parking/.env ]; then pm2 restart guts-parking --update-env; fi
-    ;;
+  restart) pm2 restart guts-erp --update-env ;;
   domain)
     [ -n "${2:-}" ] || { echo "用法: erp domain https://erp.example.jp"; exit 1; }
     sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=$2|" .env

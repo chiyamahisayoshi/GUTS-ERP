@@ -1,6 +1,6 @@
 {
   "name": "guts-erp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,6 +11,7 @@
     "build": "esbuild src/ui/app.ts --bundle --minify --target=es2022 --outfile=public/app.js",
     "typecheck": "tsc --noEmit --strict --target ES2022 --moduleResolution bundler --module ESNext --lib ES2022,DOM src/ui/app.ts",
     "migrate": "node --env-file-if-exists=.env src/cli/migrate.js",
+    "import:parking": "node --env-file-if-exists=.env src/cli/import-parking-sqlite.js",
     "seed:admin": "node --env-file-if-exists=.env src/cli/seed-admin.js",
     "reset:password": "node --env-file-if-exists=.env src/cli/reset-password.js",
     "test": "node --test",
@@ -21,9 +22,11 @@
     "@fastify/rate-limit": "^10.2.1",
     "bcryptjs": "^3.0.2",
     "fastify": "^5.2.0",
-    "mysql2": "^3.14.0"
+    "mysql2": "^3.14.0",
+    "three": "^0.180.0"
   },
   "devDependencies": {
+    "@types/three": "^0.186.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }

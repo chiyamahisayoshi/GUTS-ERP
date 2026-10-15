@@ -12,9 +12,9 @@ import { createAccountRepository } from './repositories/account-repository.js';
 import { createAdminRepository } from './repositories/admin-repository.js';
 import { createVehicleRepository } from './repositories/vehicle-repository.js';
 import { createReservationRepository } from './repositories/reservation-repository.js';
+import { createParkingRepository } from './repositories/parking-repository.js';
+import { createParkingRealtime } from './parking-realtime.js';
 import { createAuthService } from './services/auth-service.js';
-import { createParkingIntegration } from './services/parking-integration.js';
-import { registerParkingProxy } from './parking-proxy.js';
 import { registerRoutes } from './routes.js';
 import { createErrorLogger } from './error-logger.js';
 
@@ -38,12 +38,16 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
       audience: config.jwt.audience
     }
   });
+  const parkingRealtime = createParkingRealtime(app, config.publicBaseUrl);
 
   const webRoot = resolve(fileURLToPath(new URL('../public/', import.meta.url)));
-  const [indexTemplate, appBundle, styles, packageJson] = await Promise.all([
+  const [indexTemplate, appBundle, styles, serviceWorker, manifest, icon, packageJson] = await Promise.all([
     readFile(resolve(webRoot, 'index.html'), 'utf8'),
     readFile(resolve(webRoot, 'app.js')),
     readFile(resolve(webRoot, 'styles.css')),
+    readFile(resolve(webRoot, 'sw.js')),
+    readFile(resolve(webRoot, 'manifest.webmanifest')),
+    readFile(resolve(webRoot, 'icon.svg')),
     readFile(resolve(webRoot, '..', 'package.json'), 'utf8')
   ]);
   const assetHash = (content) => createHash('sha256').update(content).digest('hex').slice(0, 12);
@@ -63,19 +67,30 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
     .type('text/css; charset=utf-8')
     .header('Cache-Control', 'public, max-age=3600')
     .send(styles));
+  app.get('/sw.js', async (_request, reply) => reply
+    .type('application/javascript; charset=utf-8')
+    .header('Cache-Control', 'no-cache')
+    .header('Service-Worker-Allowed', '/')
+    .send(serviceWorker));
+  app.get('/manifest.webmanifest', async (_request, reply) => reply
+    .type('application/manifest+json; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=3600')
+    .send(manifest));
+  app.get('/icon.svg', async (_request, reply) => reply
+    .type('image/svg+xml; charset=utf-8')
+    .header('Cache-Control', 'public, max-age=86400')
+    .send(icon));
 
   const db = createMysqlRepository(pool || createPool(config.database));
   const accounts = createAccountRepository(db);
   const admin = createAdminRepository(db);
   const vehicles = createVehicleRepository(db);
   const reservations = createReservationRepository(db);
+  const parkingBoard = createParkingRepository(db);
   const auth = createAuthService({ accounts, jwt: app.jwt, config });
-  const parking = createParkingIntegration({
-    apiUrl: config.parking?.apiUrl,
-    apiKey: config.parking?.apiKey
-  });
-  registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking }, errors);
-  registerParkingProxy(app, config.parking?.backendUrl || 'http://127.0.0.1:8001');
+  registerRoutes(app, {
+    accounts, admin, vehicles, reservations, auth, parkingBoard, parkingRealtime
+  }, errors);
 
   app.setErrorHandler((error, request, reply) => {
     if (error.validation) {

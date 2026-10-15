@@ -40,11 +40,10 @@ export function createVehicleRepository(db) {
 
     async listForParkingSync() {
       return db.query(
-        `SELECT v.id, v.registration_number
+        `SELECT v.id, v.registration_number, v.make, v.model, v.site_id
            FROM vehicles v
            JOIN sites s ON s.id = v.site_id
-          WHERE s.type = 'direct' AND s.status = 'active'
-            AND v.status <> 'retired'
+          WHERE s.status = 'active' AND v.status <> 'retired'
           ORDER BY v.id`
       );
     },

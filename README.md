@@ -13,7 +13,7 @@
 - 响应式运营工作台：登录、运营概览、门店、员工/账号、角色权限、车辆和预约接待页面
 - MySQL schema migration 和首次总部管理员初始化
 - 车辆按门店隔离；只有总部账号可以创建门店、账号、角色并分配权限
-- 集成 GUTS-Parking 实时停车板；在“車両管理”中打开独立登录的停车界面，按需将直営店车辆同步到停车系统
+- ERP 原生停车板：与 ERP 共用 MySQL、账号、JWT、权限及门店隔离，支持实时更新、地图布局编辑、车辆损伤 3D 检查和原 SQLite 数据导入
 
 运行时不调用 AI 或外部 token 服务。
 
@@ -22,14 +22,14 @@
 需要 Node.js 24 和 MySQL 8.0/8.4 或 MariaDB 10.11 LTS。宝塔上如果 MySQL 8.4 安装失败，建议改装 MariaDB 10.11 LTS；应用通过 MySQL 协议连接，配置方式相同。
 
 1. 执行 `npm ci` 和 `npm run build`。
-2. 若要运行同梱停车系统测试，执行 `npm ci --prefix apps/parking`；现有停车数据应保存在仓库之外的 SQLite 路径。
+2. 现有停车数据应保存在仓库之外的 SQLite 路径；迁移前不要删除或覆盖该文件。
 3. 将 `.env.example` 复制为 `.env`，配置数据库连接、至少 32 字节的随机 `JWT_SECRET` 和 `PUBLIC_BASE_URL`。
 4. 创建空的 `guts_erp` 数据库和应用数据库用户。
 5. 执行 `npm run migrate`。
 6. 在 `.env` 设置 `ADMIN_USERNAME`、`ADMIN_DISPLAY_NAME`、`ADMIN_PASSWORD`（12–128 字符），以及可选的 `HQ_SITE_CODE` / `HQ_SITE_NAME`，再执行 `npm run seed:admin`。若账号已存在，初始化命令会拒绝覆盖。
 7. 执行 `npm run typecheck`、`npm test`、`npm run test:parking`，使用 `npm start` 启动服务。
 
-浏览器访问服务根路径 `/` 即可进入管理界面。前端 TypeScript 源码在 `src/ui/`，构建产物 `public/app.js` 已随仓库发布，因此线上使用 `npm ci --omit=dev` 即可运行，无需前端运行时或独立应用服务器。
+浏览器访问服务根路径 `/` 即可进入管理界面。前端 TypeScript 源码在 `src/ui/`，构建产物 `public/app.js` 已随仓库发布，因此线上使用 `npm ci --omit=dev` 即可运行，无需前端运行时或独立应用服务器。PWA service worker 只缓存应用 shell 静态资源；API、登录凭据和业务数据不缓存，离线时不能执行需要服务器的数据操作。
 
 服务默认只监听 `127.0.0.1:3000`。数据库密码、JWT 密钥和管理员初始化密码均由环境变量提供，不会写入源代码。
 
@@ -39,7 +39,7 @@ ERP 只持久化未处理的服务端 5xx 和明确的停车系统集成异常�
 
 默认路径是运行目录下 `.runtime/erp-errors.log`（一份活动日志和一份 `.1` 轮转日志），该目录已加入 `.gitignore`。可用 `ERP_ERROR_LOG_PATH` 指定其他绝对路径；部署到 `/www/wwwroot/guts-erp` 时默认位置为 `/www/wwwroot/guts-erp/.runtime/erp-errors.log`。每个文件最多 1 MiB，轮转时删除更旧日志，因此总占用上限约 2 MiB；目录创建及文件权限尽可能限制为仅服务账号可读写。写入或轮转失败会明确报到 console/PM2 日志，不会静默忽略。达到上限后自动轮转，手动清理时可删除该路径及其 `.1` 文件。
 
-停车场配置、同源 `/parking/` WebSocket 反代、SQLite 数据保护和 ERP → Parking 的手动同步步骤请见 [`docs/PARKING_DEPLOYMENT.md`](docs/PARKING_DEPLOYMENT.md)。Parking 保留独立的 SQLite 数据与账号，初次启用同步前须检查既有车牌/external_id 映射。
+ERP 已提供原生停车板页面和 `/api/v1/parking/*` API，停车运行数据位于与ERP共用的MySQL数据库，使用ERP JWT、账号、权限和站点隔离。迁移原有SQLite数据前必须按 [`docs/PARKING_DATABASE_MIGRATION.md`](docs/PARKING_DATABASE_MIGRATION.md) 执行显式映射、预检、备份和导入；没有真实数据导入及验收前，应保留旧SQLite原件和备份。
 
 ## API
 
@@ -61,8 +61,12 @@ ERP 只持久化未处理的服务端 5xx 和明确的停车系统集成异常�
 | PATCH | `/api/v1/vehicles/:id` | `vehicles:write` | 更新车辆信息 |
 | GET / POST | `/api/v1/reservations` | `reservations:read` / `reservations:write` | 查询预约、登记客人与租期并预留车辆 |
 | PATCH | `/api/v1/reservations/:id` | `reservations:write` | 办理取车、还车或取消；同步车辆状态 |
+| GET | `/api/v1/parking/bootstrap` | `parking:read` | 读取当前ERP站点的停车板、车辆、任务、査定与管理数据 |
+| PATCH | `/api/v1/parking/vehicles/:id` | `parking:read`, `parking:write` | 更新车辆位置、状态、选项、评估和损伤标记 |
+| POST / PATCH / DELETE | `/api/v1/parking/*` | `parking:admin` | 管理停车区域、状态、类别、选项、门店、距离、评估项与损伤类型 |
+| POST / PATCH / DELETE | `/api/v1/parking/jobs` | `parking:read`, `parking:write` | 管理当前站点车辆搬运任务 |
 
-当前权限标识符：`sites:read`、`sites:write`、`accounts:write`、`vehicles:read`、`vehicles:write`。JWT 含 `sub`、`username`、`siteId`、`siteCode`、`siteType`、`permissions` 和标准的 issuer、audience、expiry claims。有效期默认为 1 小时、最长 24 小时。Parking 使用自己既有的 SQLite 用户/session；ERP 不向停车系统共享 JWT 密钥。
+当前权限标识符：`sites:read`、`sites:write`、`accounts:write`、`vehicles:read`、`vehicles:write`、`parking:read`、`parking:write`、`parking:admin`、`reservations:read`、`reservations:write`。停车API和WebSocket使用ERP签发的JWT与site权限；停车数据通过ERP MySQL数据访问层读写。总部管理员默认获得停车三项权限，其他角色由管理员在角色管理中配置。JWT含 `sub`、`username`、`siteId`、`siteCode`、`siteType`、`permissions` 和标准 issuer、audience、expiry claims；有效期默认为1小时、最长24小时。
 
 门店创建和账号/角色/权限管理仅限总部账号。车辆按门店隔离，总部账号可处理全店数据。
 

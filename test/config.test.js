@@ -29,7 +29,7 @@ test('config rejects an empty ERP error log path', () => {
   }
 });
 
-test('parking API permits loopback HTTP only and requires a strong paired key', () => {
+test('legacy Parking network settings are not part of ERP runtime configuration', () => {
   const keys = [
     'JWT_SECRET', 'PUBLIC_BASE_URL', 'DB_USER', 'DB_PASSWORD',
     'PARKING_API_URL', 'PARKING_API_KEY', 'PARKING_BACKEND_URL'
@@ -40,16 +40,12 @@ test('parking API permits loopback HTTP only and requires a strong paired key', 
     PUBLIC_BASE_URL: 'https://erp.example.jp',
     DB_USER: 'erp',
     DB_PASSWORD: 'password',
-    PARKING_API_URL: 'http://127.0.0.1:8001/api/v1',
-    PARKING_API_KEY: 'parking-api-key-with-at-least-32-bytes'
+    PARKING_API_URL: 'http://legacy-parking.invalid/api/v1',
+    PARKING_API_KEY: 'obsolete',
+    PARKING_BACKEND_URL: 'http://legacy-parking.invalid'
   });
   try {
-    assert.equal(getConfig().parking.apiUrl, 'http://127.0.0.1:8001/api/v1');
-    process.env.PARKING_API_URL = 'http://parking.example.jp/api/v1';
-    assert.throws(() => getConfig(), /must use HTTPS/);
-    process.env.PARKING_API_URL = 'https://parking.example.jp/api/v1';
-    delete process.env.PARKING_API_KEY;
-    assert.throws(() => getConfig(), /configured together/);
+    assert.equal(Object.hasOwn(getConfig(), 'parking'), false);
   } finally {
     for (const key of keys) {
       if (previous[key] === undefined) delete process.env[key];
