@@ -28,11 +28,12 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   assert.equal(page.statusCode, 200);
   assert.match(page.headers['content-type'], /text\/html/);
   assert.match(page.body, /GUTS ERP/);
+  assert.match(page.body, /<html lang="ja">/);
+  assert.match(page.body, /<meta name="app-version" content="\d+\.\d+\.\d+">/);
   const bundle = await app.inject({ method: 'GET', url: '/assets/app.js' });
   assert.equal(bundle.statusCode, 200);
   assert.match(bundle.headers['content-type'], /javascript/);
-  assert.ok(bundle.body.includes('placeholder="\\u8D26\\u53F7"'));
-  assert.ok(bundle.body.includes('placeholder="\\u5BC6\\u7801"'));
+  assert.ok(!/[一-龥]/.test(bundle.body));
   const styles = await app.inject({ method: 'GET', url: '/assets/styles.css' });
   assert.equal(styles.statusCode, 200);
   assert.match(styles.headers['content-type'], /text\/css/);
