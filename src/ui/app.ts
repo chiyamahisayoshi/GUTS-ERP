@@ -80,7 +80,7 @@ type Stats = {
   accounts: { total: number; active: number };
   vehicles: { total: number; available: number; rented: number; maintenance: number };
 };
-type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'vehicles';
+type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'vehicles' | 'parking';
 
 const $ = <T extends HTMLElement>(selector: string, parent: ParentNode = document) =>
   parent.querySelector<T>(selector);
@@ -101,6 +101,7 @@ const svgPaths: Record<string, string> = {
   dashboard: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
   site: '<path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M8 9v.01M8 12v.01M8 15v.01M8 18v.01M15 12v.01M15 15v.01M15 18v.01"/>',
+  parking: '<path d="M5 21V3h8a6 6 0 0 1 0 12H5"/><path d="M9 7h4a2 2 0 0 1 0 4H9z"/>',
   people: '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
   vehicle: '<path d="m5 11 1.5-5h11L19 11M3 11h18v8H3zM5 19v2m14-2v2"/><circle cx="7.5" cy="15" r="1"/><circle cx="16.5" cy="15" r="1"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
@@ -116,7 +117,7 @@ const icon = (name: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const titles: Record<Page, string> = {
   dashboard: '運営ダッシュボード', reservations: '予約・受付', sites: '店舗管理',
-  accounts: '店舗アカウント', vehicles: '車両管理'
+  accounts: '店舗アカウント', vehicles: '車両管理', parking: '駐車場管理'
 };
 const statusLabel: Record<string, string> = {
   active: '有効', disabled: '無効', inactive: '無効', available: '貸出可能', rented: '貸出中',
@@ -171,11 +172,14 @@ let token = sessionStorage.getItem('guts_erp_token') || '';
 let profile: Profile | null = null;
 let language: Language = 'ja';
 let currentPage: Page = 'dashboard';
-let currentVehicleView: 'list' | 'parking' = 'list';
 let modal = '';
 let query = '';
 let offset = 0;
 let statusFilter = '';
+let parkingCatalogQuery = '';
+let parkingClassFilter = 'all';
+let parkingStatusFilter = 'all';
+let showParkingLocationManager = false;
 let cachedSites: Site[] = [];
 let cachedPermissions: Permission[] = [];
 let currentEmployees: Employee[] = [];
@@ -205,6 +209,12 @@ let inspectedVehicleId: number | null = null;
 let markingDrawingLotId: number | null = null;
 let markingColor = '#e34b4b';
 let markingDrag: { pointerId: number; lotId: number; x1: number; y1: number; svg: SVGSVGElement } | null = null;
+let resizingParkingLotId: number | null = null;
+let parkingResize: {
+  pointerId: number; lotId: number; card: HTMLElement; map: HTMLElement; handle: HTMLElement;
+  startX: number; startY: number; width: number; height: number; gridWidth: number;
+  nextWidth: number; nextHeight: number;
+} | null = null;
 
 function activeLanguage(): Language {
   return profile?.isAdmin ? language : 'ja';
@@ -313,14 +323,13 @@ function navItems(): { page: Page; title: string; icon: string; permission?: str
     { page: 'dashboard', title: '運営ダッシュボード', icon: 'dashboard' },
     { page: 'reservations', title: '予約・受付', icon: 'calendar', permission: 'reservations:read' },
     { page: 'sites', title: '店舗管理', icon: 'site', permission: 'sites:read' },
-    { page: 'vehicles', title: '車両管理', icon: 'vehicle', permission: 'vehicles:read' }
+    { page: 'vehicles', title: '車両管理', icon: 'vehicle', permission: 'vehicles:read' },
+    { page: 'parking', title: '駐車場管理', icon: 'parking', permission: 'parking:read' }
   ];
   if (profile?.isAdmin) items.splice(3, 0, {
     page: 'accounts', title: '店舗アカウント', icon: 'people'
   });
-  return items.filter((item) => (item.page === 'vehicles'
-    ? can('vehicles:read') || can('parking:read')
-    : (!item.permission || can(item.permission))));
+  return items.filter((item) => !item.permission || can(item.permission));
 }
 function renderLogin() {
   document.documentElement.lang = 'ja';
@@ -375,8 +384,9 @@ async function connectParkingRealtime() {
     socket.onmessage = (event) => {
       try {
         const message = JSON.parse(String(event.data)) as { type?: string };
-        if (message.type === 'parking:updated' && currentPage === 'vehicles' &&
-            currentVehicleView === 'parking') void renderParkingBoard();
+        if (message.type === 'parking:updated' && currentPage === 'parking') {
+          void renderParkingBoard();
+        }
       } catch {
         toast('駐車場の更新通知を読み取れませんでした。', true);
       }
@@ -422,18 +432,22 @@ function renderShell() {
   root.onpointerdown = (event) => {
     startParkingDrag(event);
     startParkingMarking(event);
+    startParkingResize(event);
   };
   root.onpointermove = (event) => {
     moveParkingDrag(event);
     moveParkingMarking(event);
+    moveParkingResize(event);
   };
   root.onpointerup = (event) => {
     void finishParkingDrag(event);
     void finishParkingMarking(event);
+    void finishParkingResize(event);
   };
   root.onpointercancel = (event) => {
     void finishParkingDrag(event);
     cancelParkingMarking(event);
+    void finishParkingResize(event, true);
   };
 }
 async function loadPage() {
@@ -444,6 +458,7 @@ async function loadPage() {
       case 'sites': await renderSites(); break;
       case 'accounts': await renderAccounts(); break;
       case 'vehicles': await renderVehicles(); break;
+      case 'parking': await renderParkingBoard(); break;
     }
   } catch (error) {
     if ((error as Error).message !== 'unauthorized') {
@@ -570,12 +585,7 @@ function permissionChecks(selected: string[] = []) {
   return `<div class="check-grid">${cachedPermissions.filter(({ permission_key }) => permission_key !== 'accounts:write').map((permission) => `<label class="check-item"><input type="checkbox" name="permissions" value="${text(permission.permission_key)}" ${selected.includes(permission.permission_key) ? 'checked' : ''}><span>${permissionNames[permission.permission_key] ?? 'その他の権限'}<small>${descriptions[permission.permission_key] ?? '権限の説明はありません'}</small></span></label>`).join('')}</div>`;
 }
 async function renderVehicles() {
-  if (!can('vehicles:read')) currentVehicleView = 'parking';
-  if (currentVehicleView === 'parking') {
-    await renderParkingBoard();
-    return;
-  }
-  await loadSitesIfMissing();
+  if (can('sites:read')) await loadSitesIfMissing();
   const params = new URLSearchParams({ limit: '50', offset: String(offset) });
   if (statusFilter) params.set('status', statusFilter);
   if (query) params.set('search', query);
@@ -583,27 +593,93 @@ async function renderVehicles() {
   currentVehicles = result.items;
   const rows = result.items.map((item) => `<tr>
     <td class="primary-cell" data-label="車両">${text(item.registration_number)}<span class="secondary">${text(item.make)} ${text(item.model)} ${item.model_year ? `・${item.model_year}` : ''}</span></td>
-    <td data-label="店舗">${text(cachedSites.find((site) => site.id === item.site_id)?.name ?? item.site_id)}</td>
+    <td data-label="店舗">${text(cachedSites.find((site) => site.id === item.site_id)?.name ??
+      (profile!.site.id === item.site_id ? profile!.site.name : item.site_id))}</td>
     <td data-label="状態">${badge(item.status)}</td>
-    <td data-label="車両ID"><span class="secondary">${text(item.id.slice(0, 8))}…</span></td>
     <td data-label="操作">${can('vehicles:write') ? `<button class="btn btn-sm" data-action="edit-vehicle" data-id="${text(item.id)}">編集</button>` : ''}</td>
   </tr>`).join('');
   const filter = `<select class="filter-select" data-status><option value="">すべての状態</option>${['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${statusFilter === status ? 'selected' : ''}>${label(status)}</option>`).join('')}</select>`;
   const actions = [
-    ...(can('parking:read') ? ['<button class="btn" data-action="parking-board">駐車場配置</button>'] : []),
-    ...(can('vehicles:write') && profile!.site.type === 'headquarters' ? [
-      '<button class="btn" data-action="sync-parking">ERP車両をボードへ反映</button>',
+    ...(can('vehicles:write') ? [
       `<button class="btn btn-primary" data-modal="vehicle">${icon('plus')} 車両を追加</button>`
     ] : [])
   ].join('');
   setContent(`${pageHead('車両管理', '車両情報と稼働状況を管理', actions)}
     ${renderToolbar('ナンバープレート、メーカー、車種で検索', filter)}
-    ${pageTable(['車両 / ナンバープレート', '所属店舗', '状態', '固定ID', '操作'], rows, '車両が見つかりません')}
+    ${pageTable(['車両 / ナンバープレート', '所属店舗', '状態', '操作'], rows, '車両が見つかりません')}
     ${pagination(result.items.length)}`);
+}
+function renderParkingCatalog(board: ParkingBootstrap) {
+  const vehicles = board.vehicles.filter((vehicle) =>
+    (parkingClassFilter === 'all' || vehicle.vehicle_type === parkingClassFilter) &&
+    (!parkingCatalogQuery ||
+      `${vehicle.plate} ${vehicle.vehicle_type} ${vehicle.options.join(' ')}`
+        .toLocaleLowerCase('ja').includes(parkingCatalogQuery.toLocaleLowerCase('ja')))
+  );
+  const classes = ['all', ...board.vehicle_classes.map((item) => item.name)];
+  return `<div class="parking-catalog-content" id="parking-catalog-content">
+    <label class="parking-catalog-search">${icon('search')}<input type="search" data-parking-search
+      placeholder="車番で検索" value="${text(parkingCatalogQuery)}" aria-label="車番で検索"></label>
+    <div class="parking-class-filters" role="group" aria-label="車種で絞り込み">
+      ${classes.map((name) => `<button type="button" class="parking-class-filter${parkingClassFilter === name ? ' active' : ''}"
+        data-action="parking-class-filter" data-class="${text(name)}">${name === 'all' ? 'All' : text(name)}</button>`).join('')}
+    </div>
+    <div class="parking-catalog-list" aria-live="polite">
+      ${vehicles.length ? vehicles.map((vehicle) => {
+        const lot = board.parking_lots.find((item) => item.id === vehicle.parking_lot_id);
+        const status = board.statuses.filter((item) => vehicle.status_ids.includes(item.id))
+          .map((item) => `${item.icon} ${item.name}`).join('・');
+        const details = [vehicle.vehicle_type, lot?.name ?? '未配置', status,
+          vehicle.options.join('・')].filter(Boolean).join(' · ');
+        return `<button type="button" class="parking-catalog-item" data-action="parking-focus-vehicle"
+          data-id="${text(vehicle.id)}"><strong>${text(vehicle.plate)}</strong><span>${text(details)}</span></button>`;
+      }).join('') : parkingCatalogQuery || parkingClassFilter !== 'all'
+        ? '<p class="parking-catalog-empty">該当する車両はありません。</p>'
+        : `<div class="parking-catalog-empty">車両はありません。<br>車両管理から登録してください。
+          ${can('vehicles:read') ? '<button type="button" class="btn btn-sm" data-page="vehicles">車両管理へ</button>' : ''}</div>`}
+    </div>
+  </div>`;
+}
+function renderParkingStatusContent(board: ParkingBootstrap) {
+  const filtered = board.vehicles.filter((vehicle) =>
+    parkingStatusFilter === 'all' || vehicle.status_ids.includes(Number(parkingStatusFilter))
+  );
+  const filters = [{ id: 'all', label: 'すべて' }, ...board.statuses.map((status) => ({
+    id: String(status.id), label: `${status.icon} ${status.name}`
+  }))];
+  return `<div id="parking-status-content">
+    <div class="parking-status-filters" role="group" aria-label="対応ステータスで絞り込み">
+      ${filters.map((filter) => `<button type="button" class="parking-status-filter${parkingStatusFilter === filter.id ? ' active' : ''}"
+        data-action="parking-status-filter" data-status-id="${text(filter.id)}">${text(filter.label)}</button>`).join('')}
+    </div>
+    <div class="parking-status-list">
+      ${filtered.length ? filtered.map((vehicle) => {
+        const statuses = board.statuses.filter((status) => vehicle.status_ids.includes(status.id))
+          .map((status) => `${status.icon} ${status.name}`);
+        const flags = [
+          vehicle.unwashed ? '洗車待ち' : '',
+          vehicle.no_fuel ? '給油待ち' : '',
+          vehicle.needs_repair ? '修理待ち' : ''
+        ].filter(Boolean);
+        const lot = board.parking_lots.find((item) => item.id === vehicle.parking_lot_id);
+        return `<button type="button" class="parking-status-item" data-action="parking-focus-vehicle"
+          data-id="${text(vehicle.id)}"><strong>${text(vehicle.plate)}</strong>
+          <span>${text([lot?.name ?? '未配置', ...statuses, ...flags].join(' · '))}</span></button>`;
+      }).join('') : '<p class="parking-catalog-empty">該当する車両はありません。</p>'}
+    </div>
+  </div>`;
 }
 async function renderParkingBoard() {
   const board = await api<ParkingBootstrap>('/api/v1/parking/bootstrap');
   currentParkingBoard = board;
+  if (parkingClassFilter !== 'all' &&
+      !board.vehicle_classes.some((item) => item.name === parkingClassFilter)) {
+    parkingClassFilter = 'all';
+  }
+  if (parkingStatusFilter !== 'all' &&
+      !board.statuses.some((item) => String(item.id) === parkingStatusFilter)) {
+    parkingStatusFilter = 'all';
+  }
   const writable = can('parking:write');
   for (const vehicle of board.vehicles) {
     if (!pendingInspectionMarks.has(vehicle.id)) {
@@ -658,6 +734,7 @@ async function renderParkingBoard() {
   const lotSections = board.parking_lots.map((lot) => {
     const vehicles = board.vehicles.filter((vehicle) => vehicle.parking_lot_id === lot.id);
     const positionedVehicles = vehicles.map((vehicle) => `<article class="parking-map-vehicle"
+      data-vehicle-id="${text(vehicle.id)}"
       style="left:${vehicle.position_x * 100}%;top:${vehicle.position_y * 100}%">
       <button class="parking-drag-handle" type="button" data-parking-drag="${text(vehicle.id)}"
         aria-label="${text(vehicle.plate)}をドラッグして移動">⠿ ${text(vehicle.plate)}</button>
@@ -666,20 +743,29 @@ async function renderParkingBoard() {
     const markings = lot.markings.map((marking) =>
       `<line x1="${marking.x1 * 1000}" y1="${marking.y1 * 1000}" x2="${marking.x2 * 1000}" y2="${marking.y2 * 1000}" stroke="${text(marking.color)}" stroke-width="7" stroke-linecap="round"/>`
     ).join('');
-    return `<section class="card parking-lot"><header><div><h2>${text(lot.name)}</h2><span>${lot.capacity === null ? vehicles.length : `${vehicles.length}/${lot.capacity}`} 台 · ${lot.is_active ? '運用中' : '停止中'}</span></div>
+    const lotTitle = lot.navigation_url
+      ? `<a class="parking-lot-name" href="${text(lot.navigation_url)}" target="_blank" rel="noopener noreferrer">${text(lot.name)} <span aria-hidden="true">↗</span></a>`
+      : `<h2 class="parking-lot-name">${text(lot.name)}</h2>`;
+    return `<section class="card parking-lot" style="--parking-lot-width:${text(Math.max(30, Math.min(100, lot.area_width || 50)))}%">
+      <header><div class="parking-lot-heading">${lotTitle}<span class="parking-lot-count">${lot.capacity === null ? vehicles.length : `${vehicles.length}/${lot.capacity}`} 台</span></div>
       ${can('parking:admin') ? `<div class="parking-admin-actions">
         <button class="btn btn-sm" data-action="parking-lot-order" data-id="${text(lot.id)}" data-direction="up" aria-label="上へ">↑</button>
         <button class="btn btn-sm" data-action="parking-lot-order" data-id="${text(lot.id)}" data-direction="down" aria-label="下へ">↓</button>
-        <button class="btn btn-sm" data-action="parking-lot-settings" data-id="${text(lot.id)}">レイアウト</button>
+        <button class="btn btn-sm" data-action="parking-lot-resize" data-id="${text(lot.id)}"
+          aria-pressed="${resizingParkingLotId === lot.id}">サイズ調整</button>
+        <button class="btn btn-sm" data-action="parking-lot-settings" data-id="${text(lot.id)}">設定</button>
         <button class="btn btn-sm" data-action="parking-marking-toggle" data-id="${text(lot.id)}">${markingDrawingLotId === lot.id ? '線描画を終了' : '線を描く'}</button>
         <button class="btn btn-sm" data-action="parking-lot-toggle" data-id="${text(lot.id)}" data-active="${String(!lot.is_active)}">${lot.is_active ? '停止' : '再開'}</button>
         <button class="btn btn-sm btn-quiet" data-action="parking-lot-delete" data-id="${text(lot.id)}">削除</button>
       </div>` : ''}</header>
       <div class="parking-map${lot.is_active ? '' : ' inactive'}" data-parking-map data-lot-id="${text(lot.id)}"
-        style="height:${text(Math.max(160, Math.min(600, lot.area_height || 240)))}px;width:${text(Math.max(30, Math.min(100, lot.area_width || 100)))}%">
+        style="height:${text(Math.max(160, Math.min(600, lot.area_height || 240)))}px">
         <svg class="parking-map-markings${markingDrawingLotId === lot.id ? ' editable' : ''}" data-marking-svg
           data-lot-id="${text(lot.id)}" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="駐車区画のライン">${markings}</svg>
         ${positionedVehicles || '<span class="parking-map-empty">ここへ車両をドラッグ</span>'}
+        ${can('parking:admin') && resizingParkingLotId === lot.id
+          ? `<button class="parking-resize-handle" type="button" data-parking-resize="${text(lot.id)}"
+              aria-label="ドラッグして駐車エリアのサイズを変更" title="ドラッグしてサイズを変更">↘</button>` : ''}
       </div>
       ${markingDrawingLotId === lot.id ? `<div class="parking-marking-tools"><label>線の色 <input type="color" data-marking-color value="${text(markingColor)}"></label>
         <button class="btn btn-sm" data-action="parking-marking-undo" data-id="${text(lot.id)}" ${lot.markings.length ? '' : 'disabled'}>最後の線を取り消す</button>
@@ -700,8 +786,7 @@ async function renderParkingBoard() {
         <button class="btn btn-sm btn-quiet" data-action="parking-job-delete" data-id="${text(job.id)}">削除</button>` : (job.completed ? '完了' : '予定')}</div>
     </article>`;
   }).join('');
-  const jobs = `<section class="card parking-jobs"><header><h2>移動・作業予定</h2><span>${board.jobs.filter((job) => !job.completed).length} 件</span></header>
-    ${writable ? `<form class="parking-job-form" data-form="parking-job">
+  const jobContent = `${writable ? `<form class="parking-job-form" data-form="parking-job">
       <label>車両 <select name="vehicle_id" required><option value="">選択してください</option>${board.vehicles.map((vehicle) =>
         `<option value="${text(vehicle.id)}">${text(vehicle.plate)}</option>`
       ).join('')}</select></label>
@@ -711,12 +796,13 @@ async function renderParkingBoard() {
       <label>予定日時 <input name="scheduled_at" type="datetime-local" value="${text(localTime)}" required></label>
       <button class="btn btn-sm btn-primary" type="submit">予定を追加</button>
     </form>` : ''}
-    ${jobRows || '<p class="empty">予定はありません</p>'}</section>`;
-  const lotCreation = can('parking:admin') ? `<form class="card parking-lot-create" data-form="parking-lot">
-    <label>駐車エリア名 <input name="name" maxlength="40" required></label>
-    <label>Google Maps 案内URL <input name="navigation_url" type="url" maxlength="2000" placeholder="https://maps.google.com/…"></label>
-    <button class="btn btn-sm btn-primary" type="submit">エリアを追加</button>
-  </form>` : '';
+    <div class="parking-job-list">${jobRows || '<p class="parking-catalog-empty">予定はありません。</p>'}</div>`;
+  const locationManager = showParkingLocationManager && can('parking:admin')
+    ? `<form class="card parking-lot-create" data-form="parking-lot">
+      <label>駐車エリア名 <input name="name" maxlength="40" required></label>
+      <label>Google Maps 案内URL <input name="navigation_url" type="url" maxlength="2000" placeholder="https://maps.google.com/…"></label>
+      <button class="btn btn-sm btn-primary" type="submit">${icon('plus')} エリアを追加</button>
+    </form>` : '';
   const lotSelect = (name: string, selected?: number) => `<select name="${name}" required>
     ${board.parking_lots.map((lot) => `<option value="${text(lot.id)}" ${selected === lot.id ? 'selected' : ''}>${text(lot.name)}</option>`).join('')}
   </select>`;
@@ -772,19 +858,54 @@ async function renderParkingBoard() {
         <input name="icon" maxlength="40" placeholder="⚠️"><input name="color" type="color" value="#e34b4b">
         <button class="btn btn-sm" type="submit">追加</button></form></div>
   </section>` : '';
-  const boardActions = `${parkingMoveHistory.length ? '<button class="btn btn-sm" data-action="parking-move-undo">配置を取り消す</button>' : ''}
-    ${can('vehicles:read') ? '<button class="btn btn-sm" data-action="vehicle-list">車両一覧へ戻る</button>' : ''}`;
-  setContent(`${pageHead('駐車場配置', '車両の配置・業務状態を管理', boardActions)}
-    ${writable ? '' : '<div class="section-note">閲覧専用です。配置を変更するには駐車場書き込み権限が必要です。</div>'}
-    ${lotCreation}<div class="parking-board">${lotSections}${unassigned.length ? `<section class="card parking-lot"><header><h2>未配置</h2><span>${unassigned.length} 台</span></header>
+  const actionParts = [
+    parkingMoveHistory.length ? '<button class="btn btn-sm" data-action="parking-move-undo">配置を取り消す</button>' : '',
+    can('vehicles:read') && can('vehicles:write') && profile!.site.type === 'headquarters'
+      ? '<button class="btn btn-sm" data-action="sync-parking">ERP車両を同期</button>' : '',
+    can('parking:admin')
+      ? `<button class="btn btn-primary" data-action="parking-location-manager">${icon('plus')} 位置を管理</button>` : ''
+  ].filter(Boolean);
+  const actions = actionParts.join('');
+  const attentionCount = board.vehicles.filter((vehicle) =>
+    vehicle.status_ids.length || vehicle.unwashed || vehicle.no_fuel || vehicle.needs_repair
+  ).length;
+  const totalJobs = board.jobs.length;
+  const pendingJobs = board.jobs.filter((job) => !job.completed).length;
+  const lotCreation = locationManager;
+  const parkingGrid = board.parking_lots.length || unassigned.length
+    ? `${lotSections}${unassigned.length ? `<section class="card parking-lot parking-unassigned-lot"><header><div class="parking-lot-heading"><h2 class="parking-lot-name">未配置</h2><span class="parking-lot-count">${unassigned.length} 台</span></div></header>
       <div class="parking-map unassigned" data-parking-map data-lot-id="" style="height:auto;min-height:100px">
-        ${unassigned.map((vehicle) => `<article class="parking-map-vehicle unassigned-vehicle">
+        ${unassigned.map((vehicle) => `<article class="parking-map-vehicle unassigned-vehicle" data-vehicle-id="${text(vehicle.id)}">
           <button class="parking-drag-handle" type="button" data-parking-drag="${text(vehicle.id)}"
             aria-label="${text(vehicle.plate)}をドラッグして移動">⠿ ${text(vehicle.plate)}</button>
           <details><summary>詳細・状態</summary>${controls(vehicle)}</details>
         </article>`).join('')}
-      </div></section>` : ''}
-    </div>${jobs}${catalogs}`);
+      </div></section>` : ''}`
+    : `<section class="parking-empty-state"><strong>駐車エリアがありません</strong>
+      <span>「位置を管理」からエリアを追加すると、車両を配置できます。</span>
+      ${can('parking:admin') ? '<button class="btn btn-sm btn-primary" data-action="parking-location-manager">位置を管理</button>' : ''}</section>`;
+  setContent(`${pageHead('車両配置', '', actions)}
+    <div class="parking-summary" aria-label="車両の概要">
+      <div class="parking-summary-card"><span>登録車両</span><strong>${board.vehicles.length}</strong></div>
+      <div class="parking-summary-card"><span>配置エリア</span><strong>${board.parking_lots.length}</strong></div>
+      <div class="parking-summary-card"><span>要対応</span><strong>${attentionCount}</strong></div>
+    </div>
+    <section class="parking-fold"><details id="parking-status-panel">
+      <summary class="parking-fold-summary"><strong>ステータス別の車両</strong><span>${board.vehicles.length} 台 <span class="parking-fold-chevron" aria-hidden="true">›</span></span></summary>
+      ${renderParkingStatusContent(board)}
+    </details></section>
+    <section class="parking-fold"><details id="parking-job-panel">
+      <summary class="parking-fold-summary"><strong>ジョブ</strong><span>未完了 ${pendingJobs} / 全 ${totalJobs} 件 <span class="parking-fold-chevron" aria-hidden="true">›</span></span></summary>
+      <div class="parking-fold-content">${jobContent}</div>
+    </details></section>
+    ${writable ? '' : '<div class="section-note">閲覧専用です。配置を変更するには駐車場書き込み権限が必要です。</div>'}
+    ${lotCreation}<div class="parking-workspace"><div class="parking-grid">${parkingGrid}</div>
+      <aside class="parking-vehicle-catalog" aria-labelledby="parking-catalog-title">
+        <details open><summary class="parking-catalog-heading"><strong id="parking-catalog-title">車両一覧</strong><span>${board.vehicles.length} 台 <span class="parking-fold-chevron" aria-hidden="true">⌄</span></span></summary>
+          ${renderParkingCatalog(board)}
+        </details>
+      </aside>
+    </div>${catalogs}`);
 }
 async function renderReservations() {
   const params = new URLSearchParams({ limit: '50', offset: String(offset) });
@@ -928,26 +1049,32 @@ async function openModal(which: string, id = '') {
         ${field('name', 'スタッフ名', 'text', employee.name, '氏名を入力', true)}
       `, 'employee-edit');
     } else if (which === 'vehicle') {
-      await loadSitesIfMissing();
+      if (profile!.site.type === 'headquarters') await loadSitesIfMissing();
+      const siteField = profile!.site.type === 'headquarters'
+        ? selectField('siteId', '所属店舗', `<option value="">店舗を選択してください</option>${siteOptions()}`)
+        : `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
       modalTemplate('車両を追加', '車両情報を登録します', `<div class="form-grid">
         ${field('registrationNumber', 'ナンバープレート', 'text', '', 'プレート番号を入力してください', true)}
         ${field('vin', '車台番号（任意）', 'text', '', '車台番号')}
         ${field('make', 'メーカー', 'text', '', '例：Toyota', true)}
         ${field('model', '車種', 'text', '', '例：Prius', true)}
         ${field('modelYear', '年式（任意）', 'number', '', '2024')}
-        ${selectField('siteId', '所属店舗', `<option value="">店舗を選択してください</option>${siteOptions()}`)}
+        ${siteField}
       </div>`, 'vehicle');
     } else if (which === 'edit-vehicle') {
       const vehicle = currentVehicles.find((item) => item.id === id);
       if (!vehicle) throw new Error('not_found');
-      await loadSitesIfMissing();
+      if (profile!.site.type === 'headquarters') await loadSitesIfMissing();
+      const siteField = profile!.site.type === 'headquarters'
+        ? selectField('siteId', '所属店舗', siteOptions(vehicle.site_id))
+        : `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
       modalTemplate('車両情報を編集', `${text(vehicle.registration_number)} · 固定車両IDは変更されません`, `<input type="hidden" name="id" value="${text(vehicle.id)}"><div class="form-grid">
         ${field('registrationNumber', 'ナンバープレート', 'text', vehicle.registration_number, '', true)}
         ${field('vin', '車台番号', 'text', vehicle.vin ?? '')}
         ${field('make', 'メーカー', 'text', vehicle.make, '', true)}
         ${field('model', '車種', 'text', vehicle.model, '', true)}
         ${field('modelYear', '年式', 'number', String(vehicle.model_year ?? ''))}
-        ${selectField('siteId', '所属店舗', siteOptions(vehicle.site_id))}
+        ${siteField}
         ${selectField('status', '車両の状態', ['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${vehicle.status === status ? 'selected' : ''}>${label(status)}</option>`).join(''))}
       </div>`, 'edit-vehicle');
     } else if (which === 'reservation') {
@@ -977,7 +1104,7 @@ async function openModal(which: string, id = '') {
         <input type="hidden" name="id" value="${text(lot.id)}"><div class="form-grid">
           ${field('name', 'エリア名', 'text', lot.name, '', true)}
           ${field('area_height', '図面の高さ（px）', 'number', String(lot.area_height), '160～600', true)}
-          ${field('area_width', '図面の幅（%）', 'number', String(lot.area_width), '30～100', true)}
+          ${field('area_width', 'エリアの幅（%）', 'number', String(lot.area_width), '30～100', true)}
           ${field('capacity', '収容台数（無制限は空欄）', 'number', lot.capacity === null ? '' : String(lot.capacity), '0～1000')}
           ${field('navigation_url', 'Google Maps 案内URL', 'url', lot.navigation_url, 'https://maps.google.com/…', false, 'full')}
           ${field('class_priority', '優先車両クラス（上位からカンマ区切り）', 'text', lot.class_priority.join(', '), '', false, 'full')}
@@ -1051,6 +1178,66 @@ function startParkingDrag(event: PointerEvent) {
   };
   handle.setPointerCapture(event.pointerId);
   parkingDrag.frame = requestAnimationFrame(autoScrollParkingMap);
+}
+function startParkingResize(event: PointerEvent) {
+  const handle = (event.target as HTMLElement).closest<HTMLElement>('[data-parking-resize]');
+  if (!handle || !can('parking:admin') || !currentParkingBoard || event.button !== 0 || parkingResize) return;
+  const lotId = Number(handle.dataset.parkingResize);
+  const lot = currentParkingBoard.parking_lots.find((item) => item.id === lotId);
+  const card = handle.closest<HTMLElement>('.parking-lot');
+  const map = $('[data-parking-map]', card ?? document);
+  const grid = $('.parking-grid');
+  if (!lot || !card || !map || !grid) return;
+  const gridWidth = grid.getBoundingClientRect().width;
+  if (!gridWidth) return;
+  event.preventDefault();
+  event.stopPropagation();
+  parkingResize = {
+    pointerId: event.pointerId, lotId, card, map, handle,
+    startX: event.clientX, startY: event.clientY,
+    width: lot.area_width, height: lot.area_height, gridWidth,
+    nextWidth: lot.area_width, nextHeight: lot.area_height
+  };
+  handle.setPointerCapture(event.pointerId);
+  card.classList.add('parking-lot-resizing');
+}
+function moveParkingResize(event: PointerEvent) {
+  if (!parkingResize || event.pointerId !== parkingResize.pointerId) return;
+  const nextWidth = Math.max(30, Math.min(100,
+    Math.round(parkingResize.width +
+      (event.clientX - parkingResize.startX) / parkingResize.gridWidth * 100)));
+  const nextHeight = Math.max(160, Math.min(600,
+    Math.round(parkingResize.height + event.clientY - parkingResize.startY)));
+  parkingResize.nextWidth = nextWidth;
+  parkingResize.nextHeight = nextHeight;
+  parkingResize.card.style.setProperty('--parking-lot-width', `${nextWidth}%`);
+  parkingResize.map.style.height = `${nextHeight}px`;
+}
+async function finishParkingResize(event: PointerEvent, cancelled = false) {
+  if (!parkingResize || event.pointerId !== parkingResize.pointerId) return;
+  const resize = parkingResize;
+  parkingResize = null;
+  resize.card.classList.remove('parking-lot-resizing');
+  const lot = currentParkingBoard?.parking_lots.find((item) => item.id === resize.lotId);
+  if (cancelled || !lot) {
+    resize.card.style.setProperty('--parking-lot-width', `${resize.width}%`);
+    resize.map.style.height = `${resize.height}px`;
+    return;
+  }
+  if (resize.nextWidth === resize.width && resize.nextHeight === resize.height) return;
+  try {
+    await api(`/api/v1/parking/lots/${resize.lotId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        area_width: resize.nextWidth, area_height: resize.nextHeight
+      })
+    });
+    await renderParkingBoard();
+  } catch (error) {
+    toast(humanError((error as Error).message), true);
+    resize.card.style.setProperty('--parking-lot-width', `${resize.width}%`);
+    resize.map.style.height = `${resize.height}px`;
+  }
 }
 function autoScrollParkingMap() {
   if (!parkingDrag) return;
@@ -1435,9 +1622,32 @@ async function handleClick(event: MouseEvent) {
     parkingSocket?.close();
     parkingSocket = null;
     token = ''; profile = null; sessionStorage.removeItem('guts_erp_token'); renderLogin();
-  } else if (target.dataset.action === 'parking-board') {
-    currentVehicleView = 'parking';
-    await renderVehicles();
+  } else if (target.dataset.action === 'parking-location-manager') {
+    showParkingLocationManager = !showParkingLocationManager;
+    await renderParkingBoard();
+  } else if (target.dataset.action === 'parking-class-filter') {
+    parkingClassFilter = target.dataset.class ?? 'all';
+    const content = $('#parking-catalog-content');
+    if (content && currentParkingBoard) {
+      setHtml(content, renderParkingCatalog(currentParkingBoard));
+      content.replaceWith(content.firstElementChild!);
+    }
+  } else if (target.dataset.action === 'parking-status-filter') {
+    parkingStatusFilter = target.dataset.statusId ?? 'all';
+    const content = $('#parking-status-content');
+    if (content && currentParkingBoard) {
+      setHtml(content, renderParkingStatusContent(currentParkingBoard));
+      content.replaceWith(content.firstElementChild!);
+    }
+  } else if (target.dataset.action === 'parking-focus-vehicle') {
+    const vehicle = $<HTMLElement>(
+      `.parking-map-vehicle[data-vehicle-id="${CSS.escape(target.dataset.id ?? '')}"]`
+    );
+    vehicle?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const handle = $('[data-parking-drag]', vehicle ?? document);
+    handle?.focus({ preventScroll: true });
+    vehicle?.classList.add('parking-vehicle-highlight');
+    window.setTimeout(() => vehicle?.classList.remove('parking-vehicle-highlight'), 1700);
   } else if (target.dataset.action === 'employee-roster') {
     if (modal === 'reservation-transition') {
       const form = $('form[data-form="reservation-transition"]');
@@ -1488,6 +1698,10 @@ async function handleClick(event: MouseEvent) {
     } catch (error) { toast(humanError((error as Error).message), true); }
   } else if (target.dataset.action === 'parking-lot-settings') {
     await openModal('parking-lot-layout', target.dataset.id);
+  } else if (target.dataset.action === 'parking-lot-resize') {
+    const lotId = Number(target.dataset.id);
+    resizingParkingLotId = resizingParkingLotId === lotId ? null : lotId;
+    await renderParkingBoard();
   } else if (target.dataset.action === 'parking-marking-toggle') {
     const lotId = Number(target.dataset.id);
     markingDrawingLotId = markingDrawingLotId === lotId ? null : lotId;
@@ -1553,9 +1767,6 @@ async function handleClick(event: MouseEvent) {
       await api(`/api/v1/parking/${path}/${encodeURIComponent(target.dataset.id!)}`, { method: 'DELETE' });
       await renderParkingBoard();
     } catch (error) { toast(humanError((error as Error).message), true); }
-  } else if (target.dataset.action === 'vehicle-list') {
-    currentVehicleView = 'list';
-    await renderVehicles();
   } else if (target.dataset.action === 'sync-parking') {
     const button = target as HTMLButtonElement;
     button.disabled = true;
@@ -1564,6 +1775,7 @@ async function handleClick(event: MouseEvent) {
         '/api/v1/parking/vehicles:sync', { method: 'POST' }
       );
       toast(`駐車場ボードを更新しました（新規 ${result.created} 台、更新 ${result.updated} 台）。`);
+      await renderParkingBoard();
     } catch (error) {
       toast((error as Error).message, true);
     } finally {
@@ -1606,6 +1818,20 @@ async function handleClick(event: MouseEvent) {
 }
 function handleInput(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return;
+  if (event.target.matches('[data-parking-search]')) {
+    parkingCatalogQuery = event.target.value.trim();
+    const content = $('#parking-catalog-content');
+    if (content && currentParkingBoard) {
+      setHtml(content, renderParkingCatalog(currentParkingBoard));
+      content.replaceWith(content.firstElementChild!);
+      const search = $('[data-parking-search]');
+      search?.focus();
+      if (search instanceof HTMLInputElement) {
+        search.setSelectionRange(search.value.length, search.value.length);
+      }
+    }
+    return;
+  }
   if (event.target.matches('[data-marking-color]')) {
     markingColor = event.target.value;
     const preview = $('.parking-marking-preview');
