@@ -1,6 +1,6 @@
 # GUTS-ERP
 
-日本租车公司的 ERP API 第一版，使用 Node.js 24、Fastify 和 MySQL 协议数据库。支持 MySQL 8.0/8.4 与 MariaDB 10.11 LTS；所有数据库访问封装在 repository 数据访问层中，便于以后迁移数据库主机。
+日本租车公司的 ERP 第一版，提供可在电脑、iPad 和手机使用的响应式管理界面与 API。使用 TypeScript 构建前端，服务端为 Node.js 24 + Fastify，数据库支持 MySQL 8.0/8.4 与 MariaDB 10.11 LTS。浏览器端是静态构建文件，不需额外运行前端服务；所有数据库访问封装在 repository 数据访问层中。
 
 ## 第一版范围
 
@@ -9,6 +9,8 @@
 - 角色与稳定的权限标识符，支持角色权限和账号级权限
 - 为 GUTS-Parking 签发 HS256 JWT，支持 issuer、audience 和有效期校验
 - 车辆主数据的创建、查询、更新；车辆由 ERP 签发固定 UUID
+- 门店接待预约：记录客人、租期、预留车辆，办理取车、还车或取消
+- 响应式运营工作台：登录、运营概览、门店、员工/账号、角色权限、车辆和预约接待页面
 - MySQL schema migration 和首次总部管理员初始化
 - 车辆按门店隔离；只有总部账号可以创建门店、账号、角色并分配权限
 
@@ -18,12 +20,14 @@
 
 需要 Node.js 24 和 MySQL 8.0/8.4 或 MariaDB 10.11 LTS。宝塔上如果 MySQL 8.4 安装失败，建议改装 MariaDB 10.11 LTS；应用通过 MySQL 协议连接，配置方式相同。
 
-1. 执行 `npm ci`。
+1. 执行 `npm ci` 和 `npm run build`。
 2. 将 `.env.example` 复制为 `.env`，配置数据库连接、至少 32 字节的随机 `JWT_SECRET` 和 `PUBLIC_BASE_URL`。
 3. 创建空的 `guts_erp` 数据库和应用数据库用户。
 4. 执行 `npm run migrate`。
 5. 在 `.env` 设置 `ADMIN_USERNAME`、`ADMIN_DISPLAY_NAME`、`ADMIN_PASSWORD`（12–128 字符），以及可选的 `HQ_SITE_CODE` / `HQ_SITE_NAME`，再执行 `npm run seed:admin`。若账号已存在，初始化命令会拒绝覆盖。
-6. 执行 `npm test`，使用 `npm start` 启动服务。
+6. 执行 `npm run typecheck`、`npm test`，使用 `npm start` 启动服务。
+
+浏览器访问服务根路径 `/` 即可进入管理界面。前端 TypeScript 源码在 `src/ui/`，构建产物 `public/app.js` 已随仓库发布，因此线上使用 `npm ci --omit=dev` 即可运行，无需前端运行时或独立应用服务器。
 
 服务默认只监听 `127.0.0.1:3000`。数据库密码、JWT 密钥和管理员初始化密码均由环境变量提供，不会写入源代码。
 
@@ -35,6 +39,7 @@
 |---|---|---|---|
 | POST | `/api/v1/auth/login` | 无 | 使用用户名和密码登录并签发 JWT |
 | GET | `/api/v1/auth/me` | 已认证 | 返回当前账号和权限 |
+| GET | `/api/v1/dashboard/stats` | 已认证 | 返回当前门店或总部运营统计 |
 | GET / POST | `/api/v1/sites` | `sites:read` / `sites:write` | 门店列表和创建 |
 | GET | `/api/v1/permissions` | `accounts:write` | 稳定权限标识符目录 |
 | GET / POST | `/api/v1/roles` | `accounts:write` | 角色列表和创建 |
@@ -44,6 +49,8 @@
 | GET | `/api/v1/vehicles/:id` | `vehicles:read` | 按 UUID 查询车辆 |
 | POST | `/api/v1/vehicles` | `vehicles:write` | 创建车辆，由 ERP 分配 UUID |
 | PATCH | `/api/v1/vehicles/:id` | `vehicles:write` | 更新车辆信息 |
+| GET / POST | `/api/v1/reservations` | `reservations:read` / `reservations:write` | 查询预约、登记客人与租期并预留车辆 |
+| PATCH | `/api/v1/reservations/:id` | `reservations:write` | 办理取车、还车或取消；同步车辆状态 |
 
 当前权限标识符：`sites:read`、`sites:write`、`accounts:write`、`vehicles:read`、`vehicles:write`。JWT 含 `sub`、`username`、`siteId`、`siteCode`、`siteType`、`permissions` 和标准的 issuer、audience、expiry claims。GUTS-Parking 对接时需验证签名、issuer、audience 和有效期，并配置同一 JWT 密钥；密钥必须通过安全的环境变量分发，不能经非 HTTPS 传输。有效期默认为 1 小时、最长 24 小时。
 
@@ -57,15 +64,16 @@
 curl -fsSL https://raw.githubusercontent.com/chiyamahisayoshi/GUTS-ERP/main/deploy/install.sh -o install.sh && bash install.sh
 ```
 
-脚本会安装 Node 24 与 PM2、拉取公开仓库、自动建库和专用账号、生成 `.env` 与随机密钥、迁移、创建管理员（密码只显示一次）、PM2 开机自启，并安装 `erp` 命令：
+脚本会安装 Node 24 与 PM2、拉取公开仓库、自动建库和专用账号、生成 `.env` 与随机密钥、运行数据库迁移、创建管理员、启动服务并安装 `erp` 命令。安装后浏览器打开绑定的域名即可登录：
 
 | 命令 | 作用 |
 |------|------|
 | `erp update` | 拉取最新代码、迁移、平滑重启；失败自动回滚 |
 | `erp status` / `erp logs` / `erp restart` | 查看状态/日志/重启 |
 | `erp domain https://域名` | 修改域名并重启 |
+| `erp passwd admin` | 重置管理员密码并显示一次 |
 
-之后只需在宝塔「网站」添加站点、申请 HTTPS，并反向代理到 `http://127.0.0.1:3000`。数据库连接信息在 `/www/wwwroot/guts-erp/.env`（修改后 `erp restart`）。
+之后只需在宝塔「网站」将域名反向代理到 `http://127.0.0.1:3000` 并开启 HTTPS。总部账号可在界面创建门店、员工与角色；每位员工可用自己的手机、电脑或 iPad 登录，按所属门店权限操作预约接待和车辆。数据库连接信息在 `/www/wwwroot/guts-erp/.env`（修改后 `erp restart`）。
 
 ## Debian 12 + 宝塔手动部署
 
@@ -113,4 +121,4 @@ curl -fsSL https://raw.githubusercontent.com/chiyamahisayoshi/GUTS-ERP/main/depl
 
 ## 当前边界
 
-本版本没有前端管理界面、refresh token、JWT 吊销列表、完整审计日志或预约模块。账号停用或权限变更后，已签发 JWT 在过期前仍可用（默认最长 1 小时）。车辆 API 仅覆盖主数据、状态和门店归属，不实现租车/预约业务规则。
+预约接待目前覆盖预约登记、车辆预留、取车/还车和取消，并检查同车时间重叠及车辆可用状态；尚未接入外部预约来源、价格/费用、付款、驾照核验、电子合同或完整审计日志。账号停用或权限变更后，已签发 JWT 在过期前仍可用（默认最长 1 小时）；本版本也未提供 refresh token 或 JWT 吊销列表。

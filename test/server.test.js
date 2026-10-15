@@ -24,6 +24,17 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   assert.equal(health.statusCode, 200);
   assert.deepEqual(health.json(), { status: 'ok' });
 
+  const page = await app.inject({ method: 'GET', url: '/' });
+  assert.equal(page.statusCode, 200);
+  assert.match(page.headers['content-type'], /text\/html/);
+  assert.match(page.body, /GUTS ERP/);
+  const bundle = await app.inject({ method: 'GET', url: '/assets/app.js' });
+  assert.equal(bundle.statusCode, 200);
+  assert.match(bundle.headers['content-type'], /javascript/);
+  const styles = await app.inject({ method: 'GET', url: '/assets/styles.css' });
+  assert.equal(styles.statusCode, 200);
+  assert.match(styles.headers['content-type'], /text\/css/);
+
   const unauthorized = await app.inject({
     method: 'GET',
     url: '/api/v1/auth/me',

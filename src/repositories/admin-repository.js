@@ -56,9 +56,20 @@ export function createAdminRepository(db) {
       );
     },
 
-    async listAccounts({ siteId, limit, offset }) {
-      const siteFilter = siteId ? 'WHERE a.site_id = ?' : '';
-      const params = siteId ? [siteId, limit, offset] : [limit, offset];
+    async listAccounts({ siteId, search, limit, offset }) {
+      const filters = [];
+      const params = [];
+      if (siteId) {
+        filters.push('a.site_id = ?');
+        params.push(siteId);
+      }
+      if (search) {
+        filters.push('(a.username LIKE ? OR a.display_name LIKE ? OR s.name LIKE ? OR s.code LIKE ?)');
+        const term = `%${search}%`;
+        params.push(term, term, term, term);
+      }
+      const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+      params.push(limit, offset);
       return db.query(
         `SELECT a.id, a.site_id, a.username, a.display_name, a.status,
                 s.code AS site_code, s.name AS site_name, a.created_at,
@@ -67,7 +78,7 @@ export function createAdminRepository(db) {
                 (SELECT JSON_ARRAYAGG(ap.permission_key) FROM account_permissions ap
                   WHERE ap.account_id = a.id) AS permissions
            FROM accounts a JOIN sites s ON s.id = a.site_id
-          ${siteFilter}
+          ${where}
           ORDER BY a.id LIMIT ? OFFSET ?`,
         params
       );
@@ -137,6 +148,50 @@ export function createAdminRepository(db) {
 
     async listPermissions() {
       return db.query('SELECT permission_key, description FROM permissions ORDER BY permission_key');
+    },
+
+    async dashboardStats(siteScope) {
+      const siteClause = siteScope ? ' WHERE id = ?' : '';
+      const accountClause = siteScope ? ' WHERE site_id = ?' : '';
+      const vehicleClause = siteScope ? ' WHERE site_id = ?' : '';
+      const [sites, accounts, vehicles] = await Promise.all([
+        db.query(
+          `SELECT COUNT(*) AS total,
+                  SUM(type = 'direct') AS direct,
+                  SUM(type = 'franchise') AS franchise
+             FROM sites${siteClause}`,
+          siteScope ? [siteScope] : []
+        ),
+        db.query(
+          `SELECT COUNT(*) AS total,
+                  SUM(status = 'active') AS active
+             FROM accounts${accountClause}`,
+          siteScope ? [siteScope] : []
+        ),
+        db.query(
+          `SELECT COUNT(*) AS total,
+                  SUM(status = 'available') AS available,
+                  SUM(status = 'rented') AS rented,
+                  SUM(status = 'maintenance') AS maintenance
+             FROM vehicles${vehicleClause}`,
+          siteScope ? [siteScope] : []
+        )
+      ]);
+      const number = (value) => Number(value || 0);
+      return {
+        sites: {
+          total: number(sites[0].total),
+          direct: number(sites[0].direct),
+          franchise: number(sites[0].franchise)
+        },
+        accounts: { total: number(accounts[0].total), active: number(accounts[0].active) },
+        vehicles: {
+          total: number(vehicles[0].total),
+          available: number(vehicles[0].available),
+          rented: number(vehicles[0].rented),
+          maintenance: number(vehicles[0].maintenance)
+        }
+      };
     }
   };
 }
