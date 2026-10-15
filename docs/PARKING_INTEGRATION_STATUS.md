@@ -32,7 +32,7 @@ claim that a production data migration or cutover has been completed.
   caches API responses or authenticated business data; data operations require
   a network connection.
 - Deployment and migration documents include cutover checks, data retention,
-  and rollback cautions. Version is `0.3.2`.
+  and rollback cautions. Version is `0.3.3`.
 
 ## Verified in this workspace
 
