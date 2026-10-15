@@ -12,7 +12,7 @@ export function createVehicleRepository(db) {
       return rows[0] || null;
     },
 
-    async list({ siteId, status, limit, offset }) {
+    async list({ siteId, status, search, limit, offset }) {
       const filters = [];
       const params = [];
       if (siteId) {
@@ -22,6 +22,11 @@ export function createVehicleRepository(db) {
       if (status) {
         filters.push('status = ?');
         params.push(status);
+      }
+      if (search) {
+        filters.push('(registration_number LIKE ? OR make LIKE ? OR model LIKE ? OR vin LIKE ?)');
+        const term = `%${search}%`;
+        params.push(term, term, term, term);
       }
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
       return db.query(

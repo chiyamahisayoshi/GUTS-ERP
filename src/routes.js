@@ -20,8 +20,14 @@ function requirePermission(permission, { headquartersOnly = false } = {}) {
   };
 }
 
-export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
+export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth }) {
   app.get('/health', async () => ({ status: 'ok' }));
+
+  app.get('/api/v1/dashboard/stats', {
+    preHandler: async (request) => request.jwtVerify()
+  }, async (request) => admin.dashboardStats(
+    request.user.siteType === 'headquarters' ? undefined : request.user.siteId
+  ));
 
   app.post('/api/v1/auth/login', {
     config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
@@ -147,6 +153,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
         type: 'object',
         properties: {
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          search: { type: 'string', maxLength: 100 },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
           offset: { type: 'integer', minimum: 0, default: 0 }
         }
@@ -159,6 +166,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
     return {
       items: await admin.listAccounts({
         siteId,
+        search: request.query.search?.trim() || undefined,
         limit: request.query.limit ?? 50,
         offset: request.query.offset ?? 0
       })
@@ -220,6 +228,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
         properties: {
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
           status: { type: 'string', enum: [...vehicleStatuses] },
+          search: { type: 'string', maxLength: 100 },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
           offset: { type: 'integer', minimum: 0, default: 0 }
         }
@@ -231,6 +240,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
         ? request.query.siteId
         : request.user.siteId,
       status: request.query.status,
+      search: request.query.search?.trim() || undefined,
       limit: request.query.limit ?? 50,
       offset: request.query.offset ?? 0
     });
@@ -256,7 +266,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
         required: ['registrationNumber', 'make', 'model'],
         properties: {
           registrationNumber: { type: 'string', minLength: 1, maxLength: 32 },
-          vin: { type: 'string', maxLength: 32 },
+          vin: { type: ['string', 'null'], maxLength: 32 },
           make: { type: 'string', minLength: 1, maxLength: 80 },
           model: { type: 'string', minLength: 1, maxLength: 100 },
           modelYear: { type: 'integer', minimum: 1900, maximum: 2200 },
@@ -292,10 +302,10 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
         additionalProperties: false,
         properties: {
           registrationNumber: { type: 'string', minLength: 1, maxLength: 32 },
-          vin: { type: 'string', maxLength: 32 },
+          vin: { type: ['string', 'null'], maxLength: 32 },
           make: { type: 'string', minLength: 1, maxLength: 80 },
           model: { type: 'string', minLength: 1, maxLength: 100 },
-          modelYear: { type: 'integer', minimum: 1900, maximum: 2200 },
+          modelYear: { type: ['integer', 'null'], minimum: 1900, maximum: 2200 },
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
           status: { type: 'string', enum: [...vehicleStatuses] }
         }
@@ -312,5 +322,87 @@ export function registerRoutes(app, { accounts, admin, vehicles, auth }) {
     const vehicle = await vehicles.update(request.params.id, fields, siteScope);
     if (!vehicle) return reply.code(404).send({ error: 'vehicle_not_found' });
     return vehicle;
+  });
+
+  app.get('/api/v1/reservations', {
+    preHandler: requirePermission('reservations:read'),
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          status: { type: 'string', enum: ['reserved', 'checked_in', 'completed', 'cancelled'] },
+          search: { type: 'string', maxLength: 100 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+          offset: { type: 'integer', minimum: 0, default: 0 }
+        }
+      }
+    }
+  }, async (request) => ({
+    items: await reservations.list({
+      siteId: request.user.siteType === 'headquarters' ? request.query.siteId : request.user.siteId,
+      status: request.query.status,
+      search: request.query.search?.trim() || undefined,
+      limit: request.query.limit ?? 50,
+      offset: request.query.offset ?? 0
+    })
+  }));
+
+  app.post('/api/v1/reservations', {
+    preHandler: requirePermission('reservations:write'),
+    schema: {
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['guestName', 'guestPhone', 'startAt', 'endAt', 'vehicleId'],
+        properties: {
+          siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          guestName: { type: 'string', minLength: 1, maxLength: 120 },
+          guestPhone: { type: 'string', minLength: 5, maxLength: 32 },
+          startAt: { type: 'string', format: 'date-time' },
+          endAt: { type: 'string', format: 'date-time' },
+          vehicleId: { type: 'string', format: 'uuid' }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const siteId = request.user.siteType === 'headquarters'
+      ? request.body.siteId
+      : request.user.siteId;
+    const start = new Date(request.body.startAt);
+    const end = new Date(request.body.endAt);
+    if (!siteId || !Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) {
+      return reply.code(400).send({ error: 'invalid_reservation' });
+    }
+    const asMysqlDateTime = (date) => date.toISOString().slice(0, 23).replace('T', ' ');
+    const reservation = await reservations.create({
+      ...request.body,
+      siteId,
+      startAt: asMysqlDateTime(start),
+      endAt: asMysqlDateTime(end),
+      createdBy: request.user.sub
+    });
+    return reply.code(201).send(reservation);
+  });
+
+  app.patch('/api/v1/reservations/:id', {
+    preHandler: requirePermission('reservations:write'),
+    schema: {
+      params: { type: 'object', required: ['id'], properties: { id: { type: 'string', pattern: '^[1-9]\\d*$' } } },
+      body: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['status'],
+        properties: { status: { type: 'string', enum: ['checked_in', 'completed', 'cancelled'] } }
+      }
+    }
+  }, async (request, reply) => {
+    const result = await reservations.transition({
+      id: request.params.id,
+      status: request.body.status,
+      siteId: request.user.siteType === 'headquarters' ? undefined : request.user.siteId
+    });
+    if (!result) return reply.code(404).send({ error: 'reservation_not_found' });
+    return result;
   });
 }
