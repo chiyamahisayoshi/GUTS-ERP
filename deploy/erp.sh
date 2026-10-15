@@ -22,6 +22,12 @@ case "${1:-help}" in
       exit 1
     fi
     ;;
+  passwd)
+    u="${2:-admin}"
+    p="$(head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c 20)"
+    RESET_USERNAME="$u" RESET_PASSWORD="$p" npm run --silent reset:password
+    echo "账号: $u"; echo "新密码: $p   （只显示这一次，请保存）"
+    ;;
   status) pm2 status guts-erp; curl -fsS http://127.0.0.1:3000/health && echo ;;
   logs) pm2 logs guts-erp --lines "${2:-100}" ;;
   restart) pm2 restart guts-erp --update-env ;;
@@ -31,6 +37,6 @@ case "${1:-help}" in
     pm2 restart guts-erp --update-env
     ;;
   *)
-    echo "用法: erp update | status | logs [行数] | restart | domain <https://域名>"
+    echo "用法: erp update | status | logs [行数] | restart | passwd [账号] | domain <https://域名>"
     ;;
 esac
