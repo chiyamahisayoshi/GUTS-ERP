@@ -30,11 +30,15 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   assert.match(page.body, /GUTS ERP/);
   assert.match(page.body, /<html lang="ja">/);
   assert.match(page.body, /<meta name="app-version" content="\d+\.\d+\.\d+">/);
-  const bundle = await app.inject({ method: 'GET', url: '/assets/app.js' });
+  const appAsset = page.body.match(/src="([^"]*\/assets\/app\.js\?v=[a-f0-9]{12})"/);
+  const stylesAsset = page.body.match(/href="([^"]*\/assets\/styles\.css\?v=[a-f0-9]{12})"/);
+  assert.ok(appAsset);
+  assert.ok(stylesAsset);
+  const bundle = await app.inject({ method: 'GET', url: appAsset[1] });
   assert.equal(bundle.statusCode, 200);
   assert.match(bundle.headers['content-type'], /javascript/);
   assert.ok(!/[一-龥]/.test(bundle.body));
-  const styles = await app.inject({ method: 'GET', url: '/assets/styles.css' });
+  const styles = await app.inject({ method: 'GET', url: stylesAsset[1] });
   assert.equal(styles.statusCode, 200);
   assert.match(styles.headers['content-type'], /text\/css/);
 

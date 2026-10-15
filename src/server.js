@@ -5,6 +5,7 @@ import { getConfig } from './config.js';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { createPool } from './db/pool.js';
 import { createMysqlRepository } from './repositories/mysql-repository.js';
 import { createAccountRepository } from './repositories/account-repository.js';
@@ -38,10 +39,11 @@ export async function buildApp({ config = getConfig(), pool, logger = true } = {
     readFile(resolve(webRoot, 'styles.css')),
     readFile(resolve(webRoot, '..', 'package.json'), 'utf8')
   ]);
-  const indexHtml = indexTemplate.replaceAll(
-    '__APP_VERSION__',
-    JSON.parse(packageJson).version
-  );
+  const assetHash = (content) => createHash('sha256').update(content).digest('hex').slice(0, 12);
+  const indexHtml = indexTemplate
+    .replaceAll('__APP_VERSION__', JSON.parse(packageJson).version)
+    .replaceAll('__APP_JS_HASH__', assetHash(appBundle))
+    .replaceAll('__APP_CSS_HASH__', assetHash(styles));
   app.get('/', async (_request, reply) => reply
     .type('text/html; charset=utf-8')
     .header('Cache-Control', 'no-cache')
