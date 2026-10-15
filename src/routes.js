@@ -9,9 +9,13 @@ function isText(value, min, max) {
 }
 
 function requirePermission(permission, { headquartersOnly = false } = {}) {
+  return requirePermissions([permission], { headquartersOnly });
+}
+
+function requirePermissions(permissions, { headquartersOnly = false } = {}) {
   return async (request, reply) => {
     await request.jwtVerify();
-    if (!request.user.permissions?.includes(permission)) {
+    if (permissions.some((permission) => !request.user.permissions?.includes(permission))) {
       return reply.code(403).send({ error: 'forbidden' });
     }
     if (headquartersOnly && request.user.siteType !== 'headquarters') {
@@ -20,8 +24,56 @@ function requirePermission(permission, { headquartersOnly = false } = {}) {
   };
 }
 
-export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth }) {
+export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking }) {
   app.get('/health', async () => ({ status: 'ok' }));
+
+  app.post('/api/v1/parking/session', {
+    preHandler: requirePermission('vehicles:read')
+  }, async (request, reply) => {
+    const secure = request.protocol === 'https';
+    const maxAge = Math.max(0, request.user.exp - Math.floor(Date.now() / 1000));
+    reply.header('Set-Cookie', [
+      `erp_parking_access=${request.headers.authorization.slice(7)}`,
+      'Path=/parking',
+      'HttpOnly',
+      'SameSite=Strict',
+      `Max-Age=${maxAge}`,
+      ...(secure ? ['Secure'] : [])
+    ].join('; '));
+    return { status: 'ok' };
+  });
+
+  app.delete('/api/v1/parking/session', async (_request, reply) => {
+    reply.header('Set-Cookie', [
+      'erp_parking_access=',
+      'Path=/parking',
+      'HttpOnly',
+      'SameSite=Strict',
+      'Max-Age=0',
+      ...(_request.protocol === 'https' ? ['Secure'] : [])
+    ].join('; '));
+    return reply.code(204).send();
+  });
+
+  app.post('/api/v1/parking/vehicles:sync', {
+    preHandler: requirePermissions(['vehicles:read', 'vehicles:write'], { headquartersOnly: true })
+  }, async (request, reply) => {
+    try {
+      const vehiclesToSync = await vehicles.listForParkingSync();
+      const result = await parking.syncVehicles(vehiclesToSync);
+      return { synced: result.synced };
+    } catch (error) {
+      if (['parking_not_configured', 'parking_unavailable', 'parking_upstream_error',
+        'parking_invalid_response', 'parking_legacy_mapping_conflict'].includes(error.code)) {
+        return reply.code(error.code === 'parking_not_configured' ? 503 : 502).send({
+          error: error.code,
+          message: error.message
+        });
+      }
+      request.log.error({ err: error }, 'Parking vehicle sync failed');
+      return reply.code(500).send({ error: 'internal_error' });
+    }
+  });
 
   app.get('/api/v1/dashboard/stats', {
     preHandler: async (request) => request.jwtVerify()

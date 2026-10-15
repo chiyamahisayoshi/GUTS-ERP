@@ -3,3 +3,9 @@ node_modules/
 .env.*
 !.env.example
 *.log
+apps/parking/node_modules/
+apps/parking/.env
+apps/parking/data/
+apps/parking/*.db
+apps/parking/*.db-*
+apps/parking/*.log

@@ -13,7 +13,8 @@
     "migrate": "node --env-file-if-exists=.env src/cli/migrate.js",
     "seed:admin": "node --env-file-if-exists=.env src/cli/seed-admin.js",
     "reset:password": "node --env-file-if-exists=.env src/cli/reset-password.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:parking": "npm --prefix apps/parking test"
   },
   "dependencies": {
     "@fastify/jwt": "^10.2.4",

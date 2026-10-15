@@ -7,12 +7,13 @@
 - 账号管理：bcrypt 密码哈希（cost 12）、账号启停、失败登录锁定 15 分钟
 - 本部、直营店、加盟店及总部账号管理
 - 角色与稳定的权限标识符，支持角色权限和账号级权限
-- 为 GUTS-Parking 签发 HS256 JWT，支持 issuer、audience 和有效期校验
+- ERP API 使用 HS256 JWT，支持 issuer、audience 和有效期校验
 - 车辆主数据的创建、查询、更新；车辆由 ERP 签发固定 UUID
 - 门店接待预约：记录客人、租期、预留车辆，办理取车、还车或取消
 - 响应式运营工作台：登录、运营概览、门店、员工/账号、角色权限、车辆和预约接待页面
 - MySQL schema migration 和首次总部管理员初始化
 - 车辆按门店隔离；只有总部账号可以创建门店、账号、角色并分配权限
+- 集成 GUTS-Parking 实时停车板；在“車両管理”中打开独立登录的停车界面，按需将直営店车辆同步到停车系统
 
 运行时不调用 AI 或外部 token 服务。
 
@@ -21,15 +22,18 @@
 需要 Node.js 24 和 MySQL 8.0/8.4 或 MariaDB 10.11 LTS。宝塔上如果 MySQL 8.4 安装失败，建议改装 MariaDB 10.11 LTS；应用通过 MySQL 协议连接，配置方式相同。
 
 1. 执行 `npm ci` 和 `npm run build`。
-2. 将 `.env.example` 复制为 `.env`，配置数据库连接、至少 32 字节的随机 `JWT_SECRET` 和 `PUBLIC_BASE_URL`。
-3. 创建空的 `guts_erp` 数据库和应用数据库用户。
-4. 执行 `npm run migrate`。
-5. 在 `.env` 设置 `ADMIN_USERNAME`、`ADMIN_DISPLAY_NAME`、`ADMIN_PASSWORD`（12–128 字符），以及可选的 `HQ_SITE_CODE` / `HQ_SITE_NAME`，再执行 `npm run seed:admin`。若账号已存在，初始化命令会拒绝覆盖。
-6. 执行 `npm run typecheck`、`npm test`，使用 `npm start` 启动服务。
+2. 若要运行同梱停车系统测试，执行 `npm ci --prefix apps/parking`；现有停车数据应保存在仓库之外的 SQLite 路径。
+3. 将 `.env.example` 复制为 `.env`，配置数据库连接、至少 32 字节的随机 `JWT_SECRET` 和 `PUBLIC_BASE_URL`。
+4. 创建空的 `guts_erp` 数据库和应用数据库用户。
+5. 执行 `npm run migrate`。
+6. 在 `.env` 设置 `ADMIN_USERNAME`、`ADMIN_DISPLAY_NAME`、`ADMIN_PASSWORD`（12–128 字符），以及可选的 `HQ_SITE_CODE` / `HQ_SITE_NAME`，再执行 `npm run seed:admin`。若账号已存在，初始化命令会拒绝覆盖。
+7. 执行 `npm run typecheck`、`npm test`、`npm run test:parking`，使用 `npm start` 启动服务。
 
 浏览器访问服务根路径 `/` 即可进入管理界面。前端 TypeScript 源码在 `src/ui/`，构建产物 `public/app.js` 已随仓库发布，因此线上使用 `npm ci --omit=dev` 即可运行，无需前端运行时或独立应用服务器。
 
 服务默认只监听 `127.0.0.1:3000`。数据库密码、JWT 密钥和管理员初始化密码均由环境变量提供，不会写入源代码。
+
+停车场配置、同源 `/parking/` WebSocket 反代、SQLite 数据保护和 ERP → Parking 的手动同步步骤请见 [`docs/PARKING_DEPLOYMENT.md`](docs/PARKING_DEPLOYMENT.md)。Parking 保留独立的 SQLite 数据与账号，初次启用同步前须检查既有车牌/external_id 映射。
 
 ## API
 
@@ -52,7 +56,7 @@
 | GET / POST | `/api/v1/reservations` | `reservations:read` / `reservations:write` | 查询预约、登记客人与租期并预留车辆 |
 | PATCH | `/api/v1/reservations/:id` | `reservations:write` | 办理取车、还车或取消；同步车辆状态 |
 
-当前权限标识符：`sites:read`、`sites:write`、`accounts:write`、`vehicles:read`、`vehicles:write`。JWT 含 `sub`、`username`、`siteId`、`siteCode`、`siteType`、`permissions` 和标准的 issuer、audience、expiry claims。GUTS-Parking 对接时需验证签名、issuer、audience 和有效期，并配置同一 JWT 密钥；密钥必须通过安全的环境变量分发，不能经非 HTTPS 传输。有效期默认为 1 小时、最长 24 小时。
+当前权限标识符：`sites:read`、`sites:write`、`accounts:write`、`vehicles:read`、`vehicles:write`。JWT 含 `sub`、`username`、`siteId`、`siteCode`、`siteType`、`permissions` 和标准的 issuer、audience、expiry claims。有效期默认为 1 小时、最长 24 小时。Parking 使用自己既有的 SQLite 用户/session；ERP 不向停车系统共享 JWT 密钥。
 
 门店创建和账号/角色/权限管理仅限总部账号。车辆按门店隔离，总部账号可处理全店数据。
 
