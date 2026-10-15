@@ -43,6 +43,7 @@ test('successful login issues a scoped token and returns stable account metadata
         username: 'staff',
         display_name: 'Staff',
         password_hash: passwordHash,
+        is_owner_admin: 0,
         status: 'active',
         site_code: 'TOKYO',
         site_type: 'direct',
@@ -67,6 +68,7 @@ test('successful login issues a scoped token and returns stable account metadata
   assert.equal(result.tokenType, 'Bearer');
   assert.equal(result.account.id, '12');
   assert.equal(result.account.site.type, 'direct');
+  assert.equal(result.account.isAdmin, false);
   assert.deepEqual(claims.payload.permissions, ['vehicles:read']);
   assert.equal(claims.options.audience, 'guts-parking');
 });

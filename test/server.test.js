@@ -46,7 +46,8 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   const bundle = await app.inject({ method: 'GET', url: appAsset[1] });
   assert.equal(bundle.statusCode, 200);
   assert.match(bundle.headers['content-type'], /javascript/);
-  assert.ok(!/[一-龥]/.test(bundle.body));
+  assert.match(bundle.body, /\\u4E2D\\u6587/);
+  assert.match(bundle.body, /\\u9884\\u7EA6\\u4E0E\\u63A5\\u5F85/);
   const styles = await app.inject({ method: 'GET', url: stylesAsset[1] });
   assert.equal(styles.statusCode, 200);
   assert.match(styles.headers['content-type'], /text\/css/);

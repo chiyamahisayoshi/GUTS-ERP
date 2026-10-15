@@ -10,6 +10,9 @@ claim that a production data migration or cutover has been completed.
 - ERP account administration is the only account system. Legacy Parking
   passwords are intentionally not imported; users receive ERP accounts and
   parking permissions through the ERP role/site administration.
+- The primary headquarters administrator is marked as the owner administrator
+  and receives the Japanese/Simplified Chinese language switch; all other
+  accounts stay in Japanese.
 - Parking includes board vehicles and status assignments, areas and map
   layouts, statuses, vehicle classes/options, stores/distances, jobs,
   assessment values, damage types and vehicle damage markers, plus site-scoped
@@ -32,7 +35,7 @@ claim that a production data migration or cutover has been completed.
   caches API responses or authenticated business data; data operations require
   a network connection.
 - Deployment and migration documents include cutover checks, data retention,
-  and rollback cautions. Version is `0.3.3`.
+  and rollback cautions. Version is `0.4.0`.
 
 ## Verified in this workspace
 

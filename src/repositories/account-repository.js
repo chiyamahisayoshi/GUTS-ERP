@@ -2,7 +2,7 @@ export function createAccountRepository(db) {
   return {
     async findByUsername(username) {
       const rows = await db.query(
-        `SELECT a.id, a.site_id, a.username, a.display_name, a.password_hash,
+        `SELECT a.id, a.site_id, a.username, a.display_name, a.password_hash, a.is_owner_admin,
                 a.status, a.failed_attempts, a.locked_until,
                 s.code AS site_code, s.name AS site_name, s.type AS site_type,
                 s.status AS site_status
@@ -15,7 +15,7 @@ export function createAccountRepository(db) {
 
     async findById(id) {
       const rows = await db.query(
-        `SELECT a.id, a.site_id, a.username, a.display_name, a.status,
+        `SELECT a.id, a.site_id, a.username, a.display_name, a.status, a.is_owner_admin,
                 s.code AS site_code, s.name AS site_name, s.type AS site_type,
                 s.status AS site_status
            FROM accounts a JOIN sites s ON s.id = a.site_id

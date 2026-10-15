@@ -826,6 +826,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
       id: String(account.id),
       username: account.username,
       displayName: account.display_name,
+      isAdmin: Number(account.is_owner_admin) === 1,
       site: {
         id: String(account.site_id),
         code: account.site_code,

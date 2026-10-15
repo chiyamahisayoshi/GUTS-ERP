@@ -34,7 +34,7 @@ async function makeApp(user) {
   });
   registerRoutes(app, {
     accounts: {
-      findById: async () => null,
+      findById: async () => user.profile ?? null,
       listPermissions: async () => []
     },
     admin: {
@@ -131,6 +131,46 @@ async function makeApp(user) {
   });
   return { app, token, calls, loggedErrors };
 }
+
+test('auth profile exposes the owner-admin marker for language-switch visibility', async (t) => {
+  const { app, token } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: [],
+    profile: {
+      id: '1', username: 'owner', display_name: 'Owner', is_owner_admin: 1,
+      site_id: '1', site_code: 'HQ', site_name: 'Headquarters',
+      site_type: 'headquarters', status: 'active', site_status: 'active'
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/me',
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().isAdmin, true);
+});
+
+test('auth profile does not grant the owner-admin marker to regular accounts', async (t) => {
+  const { app, token } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: [],
+    profile: {
+      id: '14', username: 'staff', display_name: 'Staff', is_owner_admin: 0,
+      site_id: '2', site_code: 'TOKYO', site_name: 'Tokyo',
+      site_type: 'direct', status: 'active', site_status: 'active'
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'GET',
+    url: '/api/v1/auth/me',
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().isAdmin, false);
+});
 
 test('store users cannot query vehicles outside their own site', async (t) => {
   const { app, token, calls } = await makeApp({

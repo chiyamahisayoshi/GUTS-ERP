@@ -1,4 +1,5 @@
 import { mountParkingInspection } from './parking-inspection3d.js';
+import { translateText, type Language } from './i18n.js';
 
 type Site = { id: string; code: string; name: string; type: string; status: string };
 type Account = {
@@ -69,7 +70,8 @@ type Reservation = {
   model: string | null; status: string;
 };
 type Profile = {
-  id: string; username: string; displayName: string; site: Site; permissions: string[];
+  id: string; username: string; displayName: string; isAdmin: boolean;
+  site: Site; permissions: string[];
 };
 type Stats = {
   sites: { total: number; direct: number; franchise: number };
@@ -128,10 +130,12 @@ const statusTone: Record<string, string> = {
 };
 const label = (value: string) => statusLabel[value] ?? value;
 const badge = (value: string) => `<span class="badge badge-${statusTone[value] ?? (value === 'headquarters' ? 'blue' : 'gray')}">${esc(label(value))}</span>`;
-const text = (value: unknown) => esc(value);
+const text = (value: unknown) => esc(value).replace(/[^\u0000-\u007F]/gu, (character) =>
+  `&#${character.codePointAt(0)};`);
 const moneylessDate = (value: string) => {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? esc(value) : new Intl.DateTimeFormat('ja-JP', {
+  const locale = activeLanguage() === 'zh' ? 'zh-CN' : 'ja-JP';
+  return Number.isNaN(date.getTime()) ? esc(value) : new Intl.DateTimeFormat(locale, {
     month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
   }).format(date);
 };
@@ -162,6 +166,7 @@ const humanError = (code: string) => ({
 
 let token = sessionStorage.getItem('guts_erp_token') || '';
 let profile: Profile | null = null;
+let language: Language = 'ja';
 let currentPage: Page = 'dashboard';
 let currentVehicleView: 'list' | 'parking' = 'list';
 let modal = '';
@@ -193,6 +198,21 @@ let inspectedVehicleId: number | null = null;
 let markingDrawingLotId: number | null = null;
 let markingColor = '#e34b4b';
 let markingDrag: { pointerId: number; lotId: number; x1: number; y1: number; svg: SVGSVGElement } | null = null;
+
+function activeLanguage(): Language {
+  return profile?.isAdmin ? language : 'ja';
+}
+function setHtml(target: HTMLElement, html: string) {
+  target.innerHTML = translateText(html, activeLanguage());
+}
+async function changeLanguage(next: Language) {
+  if (!profile?.isAdmin) return;
+  language = next;
+  localStorage.setItem('guts_erp_language', language);
+  document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'ja';
+  renderShell();
+  await loadPage();
+}
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
@@ -237,9 +257,12 @@ function toast(message: string, isError = false) {
   }
   const item = document.createElement('div');
   item.className = `toast${isError ? ' error' : ''}`;
-  item.textContent = message;
+  item.textContent = translateText(message, activeLanguage());
   area.append(item);
   window.setTimeout(() => item.remove(), 3600);
+}
+function confirmAction(message: string) {
+  return window.confirm(translateText(message, activeLanguage()));
 }
 window.addEventListener('error', (event: ErrorEvent) => {
   const target = event.target;
@@ -293,6 +316,7 @@ function navItems(): { page: Page; title: string; icon: string; permission?: str
     (!['accounts', 'roles'].includes(item.page) || profile?.site.type === 'headquarters'));
 }
 function renderLogin() {
+  document.documentElement.lang = 'ja';
   root.innerHTML = `<main class="login-screen login-simple">
     <form class="login-form" data-form="login">
       <input name="username" autocomplete="username" required placeholder="アカウント" aria-label="アカウント">
@@ -327,6 +351,8 @@ function renderLogin() {
 }
 async function loadProfile() {
   profile = await api<Profile>('/api/v1/auth/me');
+  language = profile.isAdmin && localStorage.getItem('guts_erp_language') === 'zh' ? 'zh' : 'ja';
+  document.documentElement.lang = activeLanguage() === 'zh' ? 'zh-CN' : 'ja';
   renderShell();
   await loadPage();
   void connectParkingRealtime();
@@ -366,7 +392,7 @@ function renderShell() {
   if (!profile) return renderLogin();
   const menu = navItems();
   const firstName = profile.displayName.trim().slice(0, 1) || 'G';
-  root.innerHTML = `<div class="shell">
+  setHtml(root, `<div class="shell">
     <aside class="sidebar${isMobileNav ? ' open' : ''}">
       <a class="brand" href="#" data-page="dashboard"><span class="brand-mark">G</span><span><strong>GUTS ERP</strong><small>レンタカー運営管理</small></span></a>
       <div class="nav-label">メニュー</div><nav class="nav">${menu.map((item) =>
@@ -378,10 +404,10 @@ function renderShell() {
       </div>
     </aside>
     <main class="main">
-      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions"><span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
+      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions">${profile.isAdmin ? `<div class="language-switch" role="group" aria-label="言語切替"><button class="btn btn-sm${language === 'ja' ? ' active' : ''}" data-language="ja" aria-pressed="${language === 'ja'}">日本語</button><button class="btn btn-sm${language === 'zh' ? ' active' : ''}" data-language="zh" aria-pressed="${language === 'zh'}">中文</button></div>` : ''}<span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
       <section class="content" id="page-content"><div class="empty">読み込み中…</div></section>
     </main>
-  </div>`;
+  </div>`);
   root.onclick = handleClick;
   root.onsubmit = handleSubmit;
   root.oninput = handleInput;
@@ -416,19 +442,20 @@ async function loadPage() {
   } catch (error) {
     if ((error as Error).message !== 'unauthorized') {
       const content = $('#page-content');
-      if (content) content.innerHTML = `<div class="empty"><strong>読み込めませんでした</strong>${text(humanError((error as Error).message))}<br><br><button class="btn" data-action="refresh">${icon('refresh')} 再試行</button></div>`;
+      if (content) setHtml(content, `<div class="empty"><strong>読み込めませんでした</strong>${text(humanError((error as Error).message))}<br><br><button class="btn" data-action="refresh">${icon('refresh')} 再試行</button></div>`);
     }
   }
 }
 function setContent(html: string) {
   const content = $('#page-content');
-  if (content) content.innerHTML = html;
+  if (content) setHtml(content, html);
 }
 function pageHead(title: string, subtitle: string, action = '') {
   return `<div class="page-head"><div><h1>${title}</h1><p>${subtitle}</p></div><div class="head-actions">${action}</div></div>`;
 }
 function statCard(title: string, number: number, foot: string, iconName: string, tone = '') {
-  return `<article class="stat-card"><div class="stat-top">${title}<span class="stat-icon ${tone}">${icon(iconName)}</span></div><div class="stat-number">${number.toLocaleString('ja-JP')}</div><div class="stat-foot">${foot}</div></article>`;
+  const locale = activeLanguage() === 'zh' ? 'zh-CN' : 'ja-JP';
+  return `<article class="stat-card"><div class="stat-top">${title}<span class="stat-icon ${tone}">${icon(iconName)}</span></div><div class="stat-number">${number.toLocaleString(locale)}</div><div class="stat-foot">${foot}</div></article>`;
 }
 async function renderDashboard() {
   const [stats, sitesData, reservationsData] = await Promise.all([
@@ -819,7 +846,7 @@ function modalTemplate(title: string, subtitle: string, body: string, form: stri
   modal = form;
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = `<section class="modal" role="dialog" aria-modal="true"><header class="modal-head"><div><h2>${title}</h2><p>${subtitle}</p></div><button class="modal-close" data-action="close-modal" aria-label="閉じる">×</button></header><form data-form="${form}"><div class="modal-body">${body}</div><footer class="modal-foot"><button type="button" class="btn" data-action="close-modal">キャンセル</button><button type="submit" class="btn btn-primary">${submit}</button></footer></form></section>`;
+  setHtml(overlay, `<section class="modal" role="dialog" aria-modal="true"><header class="modal-head"><div><h2>${title}</h2><p>${subtitle}</p></div><button class="modal-close" data-action="close-modal" aria-label="閉じる">×</button></header><form data-form="${form}"><div class="modal-body">${body}</div><footer class="modal-foot"><button type="button" class="btn" data-action="close-modal">キャンセル</button><button type="submit" class="btn btn-primary">${submit}</button></footer></form></section>`);
   root.append(overlay);
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeModal();
@@ -944,14 +971,14 @@ function openParkingInspection(vehicleId: number) {
   closeParkingInspection();
   const overlay = document.createElement('div');
   overlay.className = 'parking-inspection-overlay';
-  overlay.innerHTML = `<section class="parking-inspection-dialog" role="dialog" aria-modal="true">
+  setHtml(overlay, `<section class="parking-inspection-dialog" role="dialog" aria-modal="true">
     <header><div><h2>3D車両検査</h2><p>${text(vehicle.plate)} · ドラッグで360°回転。種類を選んで車体をクリックすると記録、マーカーをクリックすると削除します。</p></div>
       <button class="btn btn-sm" type="button" data-action="parking-inspect3d-close">閉じる</button></header>
     <div class="parking-inspection-palette">${board.damage_types.map((type) =>
       `<button type="button" data-damage-type="${text(type.id)}" style="--damage-color:${text(type.color)}">${text(type.icon)} ${text(type.name)}</button>`
     ).join('')}</div>
     <div class="parking-inspection-view"></div>
-  </section>`;
+  </section>`);
   root.append(overlay);
   inspectedVehicleId = vehicleId;
   parkingInspection = mountParkingInspection(
@@ -959,6 +986,10 @@ function openParkingInspection(vehicleId: number) {
     board.damage_types,
     pendingInspectionMarks.get(vehicleId) ?? vehicle.inspection_marks,
     (marks) => pendingInspectionMarks.set(vehicleId, marks)
+  );
+  const inspectionCanvas = $('.parking-inspection-canvas', overlay);
+  if (inspectionCanvas) inspectionCanvas.setAttribute(
+    'aria-label', translateText('3D車両を回転し損傷箇所をクリックして記録', activeLanguage())
   );
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeParkingInspection();
@@ -1324,9 +1355,13 @@ async function handleClick(event: MouseEvent) {
     damageMap.append(marker);
     return;
   }
-  const target = (event.target as HTMLElement).closest<HTMLElement>('[data-page],[data-action],[data-modal]');
+  const target = (event.target as HTMLElement).closest<HTMLElement>(
+    '[data-page],[data-action],[data-modal],[data-language]'
+  );
   if (!target) return;
-  if (target.dataset.page) {
+  if (target.dataset.language === 'ja' || target.dataset.language === 'zh') {
+    await changeLanguage(target.dataset.language);
+  } else if (target.dataset.page) {
     event.preventDefault();
     closeParkingInspection();
     currentPage = target.dataset.page as Page;
@@ -1387,7 +1422,7 @@ async function handleClick(event: MouseEvent) {
       await renderParkingBoard();
     } catch (error) { toast(humanError((error as Error).message), true); }
   } else if (target.dataset.action === 'parking-job-delete') {
-    if (!window.confirm('この予定を削除しますか？')) return;
+    if (!confirmAction('この予定を削除しますか？')) return;
     try {
       await api(`/api/v1/parking/jobs/${encodeURIComponent(target.dataset.id!)}`, { method: 'DELETE' });
       toast('予定を削除しました。');
@@ -1401,7 +1436,7 @@ async function handleClick(event: MouseEvent) {
       await renderParkingBoard();
     } catch (error) { toast(humanError((error as Error).message), true); }
   } else if (target.dataset.action === 'parking-lot-delete') {
-    if (!window.confirm('この駐車エリアを削除しますか？')) return;
+    if (!confirmAction('この駐車エリアを削除しますか？')) return;
     try {
       await api(`/api/v1/parking/lots/${encodeURIComponent(target.dataset.id!)}`, { method: 'DELETE' });
       await renderParkingBoard();
@@ -1425,7 +1460,7 @@ async function handleClick(event: MouseEvent) {
         : target.dataset.action === 'parking-option-delete' ? 'options'
           : target.dataset.action === 'parking-store-delete' ? 'stores'
             : target.dataset.action === 'parking-assessment-delete' ? 'assessment-fields' : 'damage-types';
-    if (!window.confirm('この設定項目を削除しますか？')) return;
+    if (!confirmAction('この設定項目を削除しますか？')) return;
     try {
       await api(`/api/v1/parking/${path}/${encodeURIComponent(target.dataset.id!)}`, { method: 'DELETE' });
       await renderParkingBoard();
@@ -1465,7 +1500,7 @@ async function handleClick(event: MouseEvent) {
     const prompt = status === 'checked_in' ? `${item.guest_name} 様への貸出手続きを行いますか？車両 ${item.registration_number ?? ''} は貸出中になります。`
       : status === 'completed' ? `${item.guest_name} 様の返却を確認しますか？車両は貸出可能になります。`
         : `${item.guest_name} 様の予約をキャンセルしますか？`;
-    if (!window.confirm(prompt)) return;
+    if (!confirmAction(prompt)) return;
     try {
       await api(`/api/v1/reservations/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
       toast(status === 'checked_in' ? '貸出手続きが完了しました。' : status === 'completed' ? '返却手続きが完了しました。' : '予約をキャンセルしました。');
@@ -1506,14 +1541,14 @@ function handleChange(event: Event) {
   } else if (target.matches('[data-reservation-site]')) {
     const vehicleSelect = $('[name="vehicleId"]', $('.overlay')!);
     if (!vehicleSelect) return;
-    vehicleSelect.innerHTML = '<option value="">車両を読み込み中…</option>';
+    setHtml(vehicleSelect, '<option value="">車両を読み込み中…</option>');
     vehicleSelect.setAttribute('disabled', 'true');
     void api<{ items: Vehicle[] }>(`/api/v1/vehicles?${new URLSearchParams({
       status: 'available', limit: '100', siteId: target.value
     })}`).then((response) => {
-      vehicleSelect.innerHTML = `<option value="">貸出可能な車両を選択してください</option>${response.items.map((vehicle) => `<option value="${text(vehicle.id)}">${text(vehicle.registration_number)} · ${text(vehicle.make)} ${text(vehicle.model)}</option>`).join('')}`;
+      setHtml(vehicleSelect, `<option value="">貸出可能な車両を選択してください</option>${response.items.map((vehicle) => `<option value="${text(vehicle.id)}">${text(vehicle.registration_number)} · ${text(vehicle.make)} ${text(vehicle.model)}</option>`).join('')}`);
     }).catch((error) => {
-      vehicleSelect.innerHTML = '<option value="">車両を読み込めませんでした。店舗を選択し直してください。</option>';
+      setHtml(vehicleSelect, '<option value="">車両を読み込めませんでした。店舗を選択し直してください。</option>');
       toast(humanError((error as Error).message), true);
     }).finally(() => vehicleSelect.removeAttribute('disabled'));
   }
