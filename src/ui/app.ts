@@ -148,19 +148,12 @@ function navItems(): { page: Page; title: string; icon: string; permission?: str
     (!['accounts', 'roles'].includes(item.page) || profile?.site.type === 'headquarters'));
 }
 function renderLogin() {
-  root.innerHTML = `<main class="login-screen">
-    <section class="login-art">
-      <div class="login-brand"><span class="brand-mark">G</span><div><strong>GUTS ERP</strong><small>RENTAL OPERATIONS</small></div></div>
-      <div class="login-copy"><div class="eyebrow">WELCOME TO GUTS</div><h1>让每一次接待，<br>都从容有序。</h1><p>门店、员工、车辆与预约，在一处清晰掌握。专为租车团队打造的轻快运营工作台。</p></div>
-      <div class="login-foot">安全登录 · 门店数据隔离 · 实时运营管理</div>
-    </section>
-    <section class="login-form-side"><form class="login-form" data-form="login">
-      <h2>欢迎回来</h2><p>登录您的 GUTS 运营工作台</p>
-      <div class="field"><label for="login-user">登录账号</label><input id="login-user" name="username" autocomplete="username" required placeholder="请输入员工账号"></div>
-      <div class="field"><label for="login-pass">登录密码</label><input id="login-pass" name="password" type="password" autocomplete="current-password" required placeholder="请输入密码"></div>
-      <button class="btn btn-primary" type="submit">登录工作台 ${icon('arrow')}</button>
-      <div class="login-hint">账号由总部管理员创建。如无法登录，请联系总部管理员重置账号密码。</div>
-    </form></section>
+  root.innerHTML = `<main class="login-screen login-simple">
+    <form class="login-form" data-form="login">
+      <input name="username" autocomplete="username" required placeholder="账号" aria-label="账号">
+      <input name="password" type="password" autocomplete="current-password" required placeholder="密码" aria-label="密码">
+      <button class="btn btn-primary" type="submit">登录</button>
+    </form>
   </main>`;
   root.onsubmit = async (event) => {
     const form = (event.target as HTMLElement).closest<HTMLFormElement>('[data-form="login"]');
@@ -182,7 +175,7 @@ function renderLogin() {
     } catch (error) {
       toast(humanError((error as Error).message), true);
       button.disabled = false;
-      button.innerHTML = `登录工作台 ${icon('arrow')}`;
+      button.textContent = '登录';
     }
   };
 }
