@@ -32,11 +32,16 @@ export async function buildApp({ config = getConfig(), pool, logger = true } = {
   });
 
   const webRoot = resolve(fileURLToPath(new URL('../public/', import.meta.url)));
-  const [indexHtml, appBundle, styles] = await Promise.all([
+  const [indexTemplate, appBundle, styles, packageJson] = await Promise.all([
     readFile(resolve(webRoot, 'index.html'), 'utf8'),
     readFile(resolve(webRoot, 'app.js')),
-    readFile(resolve(webRoot, 'styles.css'))
+    readFile(resolve(webRoot, 'styles.css')),
+    readFile(resolve(webRoot, '..', 'package.json'), 'utf8')
   ]);
+  const indexHtml = indexTemplate.replaceAll(
+    '__APP_VERSION__',
+    JSON.parse(packageJson).version
+  );
   app.get('/', async (_request, reply) => reply
     .type('text/html; charset=utf-8')
     .header('Cache-Control', 'no-cache')
