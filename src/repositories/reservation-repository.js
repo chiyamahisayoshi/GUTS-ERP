@@ -26,7 +26,9 @@ export function createReservationRepository(db) {
       return db.query(
         `SELECT r.id, r.reservation_code, r.site_id, s.code AS site_code, s.name AS site_name,
                 r.guest_name, r.guest_phone, r.start_at, r.end_at, r.vehicle_id,
-                v.registration_number, v.make, v.model, r.status, r.created_at
+                v.registration_number, v.make, v.model, r.status, r.created_at,
+                r.checked_out_by_employee_id, r.checked_out_by_name,
+                r.returned_by_employee_id, r.returned_by_name
            FROM reservations r
            JOIN sites s ON s.id = r.site_id
            LEFT JOIN vehicles v ON v.id = r.vehicle_id
@@ -64,7 +66,7 @@ export function createReservationRepository(db) {
       });
     },
 
-    async transition({ id, status, siteId }) {
+    async transition({ id, status, siteId, employeeId }) {
       return db.transaction(async (tx) => {
         const scope = siteId ? ' AND site_id = ?' : '';
         const params = siteId ? [id, siteId] : [id];
@@ -81,6 +83,19 @@ export function createReservationRepository(db) {
         };
         if (!allowed[reservation.status]?.includes(status)) {
           throw conflict(`Cannot transition reservation from ${reservation.status} to ${status}.`);
+        }
+        let employee;
+        if (status === 'checked_in' || status === 'completed') {
+          [employee] = await tx.query(
+            `SELECT id, name FROM site_employees
+              WHERE id = ? AND site_id = ? AND status = 'active' FOR UPDATE`,
+            [employeeId, reservation.site_id]
+          );
+          if (!employee) {
+            throw Object.assign(new Error('Employee is not active at this site.'), {
+              code: 'ERP_INVALID_REFERENCE'
+            });
+          }
         }
         if (status === 'checked_in') {
           if (!reservation.vehicle_id) throw conflict('Assign a vehicle before checking in.');
@@ -99,8 +114,18 @@ export function createReservationRepository(db) {
             [reservation.vehicle_id]
           );
         }
-        await tx.query('UPDATE reservations SET status = ? WHERE id = ?', [status, id]);
-        return { id: String(id), status };
+        const employeeColumn = status === 'checked_in' ? 'checked_out_by_employee_id'
+          : status === 'completed' ? 'returned_by_employee_id' : null;
+        if (employeeColumn) {
+          const nameColumn = status === 'checked_in' ? 'checked_out_by_name' : 'returned_by_name';
+          await tx.query(
+            `UPDATE reservations SET status = ?, ${employeeColumn} = ?, ${nameColumn} = ? WHERE id = ?`,
+            [status, employeeId, employee.name, id]
+          );
+        } else {
+          await tx.query('UPDATE reservations SET status = ? WHERE id = ?', [status, id]);
+        }
+        return { id: String(id), status, ...(employeeColumn ? { employeeId: String(employeeId) } : {}) };
       });
     }
   };

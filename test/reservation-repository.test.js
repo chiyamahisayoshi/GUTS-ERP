@@ -61,6 +61,9 @@ test('checking in transitions vehicle status atomically with reservation', async
         if (sql.startsWith('SELECT id, site_id, vehicle_id, status FROM reservations')) {
           return [{ id: '15', site_id: '4', vehicle_id: 'vehicle-1', status: 'reserved' }];
         }
+        if (sql.startsWith('SELECT id, name FROM site_employees')) {
+          return [{ id: '8', name: 'Store Staff' }];
+        }
         if (sql.startsWith('SELECT id, site_id, status FROM vehicles')) {
           return [{ id: 'vehicle-1', site_id: '4', status: 'available' }];
         }
@@ -69,13 +72,65 @@ test('checking in transitions vehicle status atomically with reservation', async
     })
   };
   const repository = createReservationRepository(db);
-  const result = await repository.transition({ id: '15', status: 'checked_in', siteId: '4' });
+  const result = await repository.transition({
+    id: '15', status: 'checked_in', siteId: '4', employeeId: '8'
+  });
 
-  assert.deepEqual(result, { id: '15', status: 'checked_in' });
+  assert.deepEqual(result, { id: '15', status: 'checked_in', employeeId: '8' });
   assert.ok(calls.some(({ sql, params }) =>
     sql === 'UPDATE vehicles SET status = ? WHERE id = ?' && params[0] === 'rented'));
   assert.ok(calls.some(({ sql, params }) =>
-    sql === 'UPDATE reservations SET status = ? WHERE id = ?' && params[0] === 'checked_in'));
+    sql === 'UPDATE reservations SET status = ?, checked_out_by_employee_id = ?, checked_out_by_name = ? WHERE id = ?' &&
+    params.join('|') === 'checked_in|8|Store Staff|15'));
+});
+
+test('return transition records the receiving employee name as a historical snapshot', async () => {
+  const calls = [];
+  const db = {
+    transaction: async (callback) => callback({
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (sql.startsWith('SELECT id, site_id, vehicle_id, status FROM reservations')) {
+          return [{ id: '15', site_id: '4', vehicle_id: 'vehicle-1', status: 'checked_in' }];
+        }
+        if (sql.startsWith('SELECT id, name FROM site_employees')) {
+          return [{ id: '9', name: 'Receiving Staff' }];
+        }
+        return { affectedRows: 1 };
+      }
+    })
+  };
+  const repository = createReservationRepository(db);
+  const result = await repository.transition({
+    id: '15', status: 'completed', siteId: '4', employeeId: '9'
+  });
+
+  assert.deepEqual(result, { id: '15', status: 'completed', employeeId: '9' });
+  assert.ok(calls.some(({ sql, params }) =>
+    sql === 'UPDATE reservations SET status = ?, returned_by_employee_id = ?, returned_by_name = ? WHERE id = ?' &&
+    params.join('|') === 'completed|9|Receiving Staff|15'));
+});
+
+test('reservation handover rejects an inactive or cross-site employee', async () => {
+  const calls = [];
+  const db = {
+    transaction: async (callback) => callback({
+      query: async (sql) => {
+        calls.push(sql);
+        if (sql.startsWith('SELECT id, site_id, vehicle_id, status FROM reservations')) {
+          return [{ id: '15', site_id: '4', vehicle_id: 'vehicle-1', status: 'reserved' }];
+        }
+        if (sql.startsWith('SELECT id, name FROM site_employees')) return [];
+        throw new Error(`Unexpected SQL: ${sql}`);
+      }
+    })
+  };
+  const repository = createReservationRepository(db);
+  await assert.rejects(
+    repository.transition({ id: '15', status: 'checked_in', siteId: '4', employeeId: '9' }),
+    (error) => error.code === 'ERP_INVALID_REFERENCE'
+  );
+  assert.equal(calls.some((sql) => sql.startsWith('UPDATE')), false);
 });
 
 test('reservation transition rejects invalid state changes', async () => {

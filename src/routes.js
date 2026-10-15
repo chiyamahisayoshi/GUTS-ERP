@@ -68,7 +68,30 @@ function requirePermissions(permissions, { headquartersOnly = false } = {}) {
   };
 }
 
-export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth,
+function requireOwnerAdmin(accounts) {
+  return async (request, reply) => {
+    await request.jwtVerify();
+    const account = await accounts.findById(request.user.sub);
+    if (!account || account.status !== 'active' || account.site_status !== 'active' ||
+        Number(account.is_owner_admin) !== 1) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+  };
+}
+
+function requireEmployeeManager(accounts) {
+  return async (request, reply) => {
+    await request.jwtVerify();
+    const account = await accounts.findById(request.user.sub);
+    if (!account || account.status !== 'active' || account.site_status !== 'active' ||
+        (account.site_type === 'headquarters' && Number(account.is_owner_admin) !== 1)) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    request.employeeManager = account;
+  };
+}
+
+export function registerRoutes(app, { accounts, admin, vehicles, reservations, employees, auth,
   parkingBoard, parkingRealtime }, errorLogger, databaseHealth) {
   app.get('/health', async (_request, reply) => {
     try {
@@ -857,15 +880,15 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
   });
 
   app.get('/api/v1/permissions', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true })
+    preHandler: requireOwnerAdmin(accounts)
   }, async () => ({ items: await admin.listPermissions() }));
 
   app.get('/api/v1/roles', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true })
+    preHandler: requireOwnerAdmin(accounts)
   }, async () => ({ items: await admin.listRoles() }));
 
   app.post('/api/v1/roles', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true })
+    preHandler: requireOwnerAdmin(accounts)
   }, async (request, reply) => {
     const { roleKey, name, permissions } = request.body || {};
     if (!isText(roleKey, 1, 64) || !/^[a-z][a-z0-9_-]*$/.test(roleKey) ||
@@ -886,16 +909,20 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
   });
 
   app.post('/api/v1/accounts', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true })
+    preHandler: requireOwnerAdmin(accounts)
   }, async (request, reply) => {
-    const { siteId, username, displayName, password, roleIds = [], permissions = [] } = request.body || {};
+    const { siteId, username, password, roleIds = [], permissions = [] } = request.body || {};
     if (!/^[1-9]\d*$/.test(String(siteId)) ||
         !isText(username, 3, 64) || !/^[a-zA-Z0-9._@-]+$/.test(username) ||
-        !isText(displayName, 1, 120) || typeof password !== 'string' || password.length < 12 ||
+        typeof password !== 'string' || password.length < 12 ||
         password.length > 128 || !Array.isArray(roleIds) ||
         roleIds.some((roleId) => !/^[1-9]\d*$/.test(String(roleId))) ||
         !Array.isArray(permissions)) {
       return reply.code(400).send({ error: 'invalid_account' });
+    }
+    const [site] = await admin.listSites(String(siteId));
+    if (!site || site.type === 'headquarters' || site.status !== 'active') {
+      return reply.code(400).send({ error: 'invalid_site' });
     }
     const allowed = new Set((await admin.listPermissions()).map((item) => item.permission_key));
     if (permissions.some((permission) => !allowed.has(permission))) {
@@ -905,7 +932,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
     const account = await admin.createAccount({
       siteId: String(siteId),
       username: username.trim(),
-      displayName: displayName.trim(),
+      displayName: site.name,
       passwordHash,
       roleIds: [...new Set(roleIds.map(String))],
       permissions: [...new Set(permissions)]
@@ -914,7 +941,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
   });
 
   app.get('/api/v1/accounts', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true }),
+    preHandler: requireOwnerAdmin(accounts),
     schema: {
       querystring: {
         type: 'object',
@@ -941,7 +968,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
   });
 
   app.patch('/api/v1/accounts/:id', {
-    preHandler: requirePermission('accounts:write', { headquartersOnly: true }),
+    preHandler: requireOwnerAdmin(accounts),
     schema: {
       params: {
         type: 'object',
@@ -985,6 +1012,84 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
     const result = await admin.updateAccount(request.params.id, fields, siteScope);
     if (!result) return reply.code(404).send({ error: 'account_not_found' });
     return { id: String(result.id), status: 'updated' };
+  });
+
+  app.get('/api/v1/employees', {
+    preHandler: requireEmployeeManager(accounts),
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          includeDisabled: { type: 'boolean', default: false }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const siteId = request.employeeManager.site_type === 'headquarters'
+      ? request.query.siteId
+      : String(request.employeeManager.site_id);
+    if (!siteId) return reply.code(400).send({ error: 'site_required' });
+    return {
+      items: await employees.list({ siteId, includeDisabled: request.query.includeDisabled })
+    };
+  });
+
+  app.post('/api/v1/employees', {
+    preHandler: requireEmployeeManager(accounts),
+    schema: {
+      body: {
+        type: 'object', additionalProperties: false, required: ['name'],
+        properties: {
+          siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          name: { type: 'string', minLength: 1, maxLength: 120 }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const siteId = request.employeeManager.site_type === 'headquarters'
+      ? request.body.siteId
+      : String(request.employeeManager.site_id);
+    if (!siteId) return reply.code(400).send({ error: 'site_required' });
+    const [site] = await admin.listSites(siteId);
+    if (!site || site.status !== 'active' || site.type === 'headquarters') {
+      return reply.code(400).send({ error: 'invalid_site' });
+    }
+    const name = request.body.name.trim();
+    if (!name) return reply.code(400).send({ error: 'invalid_employee' });
+    return reply.code(201).send(await employees.create({ siteId, name }));
+  });
+
+  app.patch('/api/v1/employees/:id', {
+    preHandler: requireEmployeeManager(accounts),
+    schema: {
+      params: {
+        type: 'object', required: ['id'],
+        properties: { id: { type: 'string', pattern: '^[1-9]\\d*$' } }
+      },
+      body: {
+        type: 'object', additionalProperties: false, minProperties: 1,
+        properties: {
+          siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          name: { type: 'string', minLength: 1, maxLength: 120 },
+          status: { type: 'string', enum: ['active', 'disabled'] }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const siteId = request.employeeManager.site_type === 'headquarters'
+      ? request.body.siteId
+      : String(request.employeeManager.site_id);
+    if (!siteId) return reply.code(400).send({ error: 'site_required' });
+    const name = request.body.name?.trim();
+    if (request.body.name !== undefined && !name) {
+      return reply.code(400).send({ error: 'invalid_employee' });
+    }
+    const employee = await employees.update({
+      id: request.params.id, siteId, ...(name ? { name } : {}),
+      ...(request.body.status ? { status: request.body.status } : {})
+    });
+    return employee || reply.code(404).send({ error: 'not_found' });
   });
 
   app.get('/api/v1/vehicles', {
@@ -1160,13 +1265,21 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
         type: 'object',
         additionalProperties: false,
         required: ['status'],
-        properties: { status: { type: 'string', enum: ['checked_in', 'completed', 'cancelled'] } }
+        properties: {
+          status: { type: 'string', enum: ['checked_in', 'completed', 'cancelled'] },
+          employeeId: { type: 'string', pattern: '^[1-9]\\d*$' }
+        }
       }
     }
   }, async (request, reply) => {
+    if (request.body.status !== 'cancelled' &&
+        !/^[1-9]\d*$/.test(String(request.body.employeeId ?? ''))) {
+      return reply.code(400).send({ error: 'employee_required' });
+    }
     const result = await reservations.transition({
       id: request.params.id,
       status: request.body.status,
+      employeeId: request.body.employeeId,
       siteId: request.user.siteType === 'headquarters' ? undefined : request.user.siteId
     });
     if (!result) return reply.code(404).send({ error: 'reservation_not_found' });
