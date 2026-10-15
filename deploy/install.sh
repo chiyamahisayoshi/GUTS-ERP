@@ -43,9 +43,29 @@ say "4/7 创建数据库和 .env"
 ADMIN_PASS=""
 ADMIN_USER="${ADMIN_USERNAME:-admin}"
 if [ ! -f .env ]; then
-  if [ -z "${MYSQL_ROOT_PASSWORD:-}" ]; then
-    echo "需要 MySQL root 密码（宝塔 → 软件商店 → MySQL → 设置 → root 密码）。"
-    read -rsp "MySQL root 密码（输入不显示）: " MYSQL_ROOT_PASSWORD; echo
+  root_ok() { MYSQL_PWD="$1" "$MYSQL_BIN" -h127.0.0.1 -uroot -e 'SELECT 1' >/dev/null 2>&1; }
+  MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-}"
+  if ! root_ok "$MYSQL_ROOT_PASSWORD"; then
+    # 宝塔把 root 密码存在面板数据库里，先自动读取
+    BT_PASS="$(python3 - <<'PY' 2>/dev/null || true
+import sqlite3
+try:
+    print(sqlite3.connect('/www/server/panel/data/default.db').execute('select mysql_root from config').fetchone()[0])
+except Exception:
+    pass
+PY
+)"
+    if [ -n "$BT_PASS" ] && root_ok "$BT_PASS"; then
+      MYSQL_ROOT_PASSWORD="$BT_PASS"; echo "已自动读取宝塔保存的 MySQL root 密码。"
+    else
+      for _ in 1 2 3; do
+        echo "请输入数据库 root 密码（宝塔 → 数据库 → root密码；或软件商店 → MySQL → 设置）。"
+        read -rsp "root 密码（输入不显示）: " MYSQL_ROOT_PASSWORD; echo
+        root_ok "$MYSQL_ROOT_PASSWORD" && break
+        echo "密码不对，请重试。"; MYSQL_ROOT_PASSWORD=""
+      done
+      root_ok "$MYSQL_ROOT_PASSWORD" || die "root 密码验证失败。请在宝塔「数据库」页点“root密码”修改/查看后重新运行 bash install.sh。"
+    fi
   fi
   read -rp "访问域名（如 https://erp.example.jp ，还没定就直接回车）: " BASE_URL || true
   BASE_URL="${BASE_URL:-http://127.0.0.1:3000}"
