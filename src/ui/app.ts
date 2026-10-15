@@ -243,11 +243,17 @@ function toast(message: string, isError = false) {
 }
 window.addEventListener('error', (event: ErrorEvent) => {
   const target = event.target;
-  if (target instanceof HTMLScriptElement || target instanceof HTMLLinkElement) {
+  if (target instanceof Element &&
+      ['AUDIO', 'EMBED', 'IFRAME', 'IMG', 'LINK', 'OBJECT', 'SCRIPT', 'SOURCE', 'TRACK', 'VIDEO']
+        .includes(target.tagName)) {
+    let source = target.getAttribute('src') || target.getAttribute('href') || target.getAttribute('data') || undefined;
+    if (target instanceof HTMLImageElement || target instanceof HTMLMediaElement) {
+      source = target.currentSrc || source;
+    }
     reportClientError({
       type: 'resource',
-      message: 'A page resource failed to load.',
-      source: target instanceof HTMLScriptElement ? target.src : target.href,
+      message: `Failed to load ${target.tagName.toLowerCase()} resource.`,
+      ...(source ? { source } : {}),
       path: window.location.pathname
     });
     return;
@@ -261,7 +267,7 @@ window.addEventListener('error', (event: ErrorEvent) => {
     ...(event.lineno ? { line: event.lineno } : {}),
     ...(event.colno ? { column: event.colno } : {})
   });
-});
+}, true);
 window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
   const reason = event.reason;
   reportClientError({

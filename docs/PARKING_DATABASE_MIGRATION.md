@@ -38,6 +38,11 @@ vehicles remain imported with their legacy ID and external ID but without an
 ERP vehicle link until an operator explicitly adds a mapping. Plate-only
 matching is never guessed.
 
+The external-ID duplicate preflight asks the target MySQL/MariaDB connection
+for `utf8mb4_unicode_ci` weight strings, matching the destination unique index
+even for case- or accent-equivalent values. IDs longer than the target
+`VARCHAR(255)` limit are rejected before import.
+
 ## Prepare the mapping file
 
 Create a JSON file outside the repository and protect it because it contains
