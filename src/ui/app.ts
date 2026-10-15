@@ -6,6 +6,7 @@ type Account = {
   id: string; site_id: string; username: string; display_name: string; status: string;
   site_code: string; site_name: string; role_ids: unknown; permissions: unknown;
 };
+type Employee = { id: string; site_id: string; name: string; status: string };
 type Vehicle = {
   id: string; registration_number: string; vin: string | null; make: string; model: string;
   model_year: number | null; site_id: string; status: string;
@@ -61,13 +62,14 @@ type ParkingBootstrap = {
   store_lot_distances: ParkingStoreLotDistance[];
   jobs: ParkingJob[];
 };
-type Role = { id: string; role_key: string; name: string; permissions: unknown };
 type Permission = { permission_key: string; description: string };
 type Reservation = {
   id: string; reservation_code: string; site_id: string; site_code: string; site_name: string;
   guest_name: string; guest_phone: string; start_at: string; end_at: string;
   vehicle_id: string | null; registration_number: string | null; make: string | null;
-  model: string | null; status: string;
+  model: string | null; status: string; checked_out_by_employee_id: string | null;
+  checked_out_by_name: string | null; returned_by_employee_id: string | null;
+  returned_by_name: string | null;
 };
 type Profile = {
   id: string; username: string; displayName: string; isAdmin: boolean;
@@ -78,7 +80,7 @@ type Stats = {
   accounts: { total: number; active: number };
   vehicles: { total: number; available: number; rented: number; maintenance: number };
 };
-type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'roles' | 'vehicles';
+type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'vehicles';
 
 const $ = <T extends HTMLElement>(selector: string, parent: ParentNode = document) =>
   parent.querySelector<T>(selector);
@@ -100,7 +102,6 @@ const svgPaths: Record<string, string> = {
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>',
   site: '<path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4M8 9v.01M8 12v.01M8 15v.01M8 18v.01M15 12v.01M15 15v.01M15 18v.01"/>',
   people: '<path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
-  roles: '<path d="M12 3 4 7v5c0 5 3.4 8 8 9 4.6-1 8-4 8-9V7l-8-4Z"/><path d="m9 12 2 2 4-4"/>',
   vehicle: '<path d="m5 11 1.5-5h11L19 11M3 11h18v8H3zM5 19v2m14-2v2"/><circle cx="7.5" cy="15" r="1"/><circle cx="16.5" cy="15" r="1"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -115,7 +116,7 @@ const icon = (name: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const titles: Record<Page, string> = {
   dashboard: '運営ダッシュボード', reservations: '予約・受付', sites: '店舗管理',
-  accounts: 'スタッフ・アカウント', roles: '権限管理', vehicles: '車両管理'
+  accounts: '店舗アカウント', vehicles: '車両管理'
 };
 const statusLabel: Record<string, string> = {
   active: '有効', disabled: '無効', inactive: '無効', available: '貸出可能', rented: '貸出中',
@@ -142,16 +143,18 @@ const moneylessDate = (value: string) => {
 const humanError = (code: string) => ({
   invalid_credentials: 'アカウントまたはパスワードが正しくありません。',
   forbidden: 'この操作を行う権限がありません。',
-  resource_conflict: '情報が重複しています。コード、アカウント名、またはナンバープレートをご確認ください。',
+  resource_conflict: '情報が重複しています。店舗コード、アカウント名、ナンバープレート、またはスタッフ名をご確認ください。',
   in_use: '車両または作業予定が残っているため、この駐車エリアは削除できません。',
   last_lot: '最後の駐車エリアは削除できません。',
   reservation_conflict: '車両または予約の状態が変更されています。画面を更新して再度お試しください。',
-  invalid_reference: '選択した店舗、役割、または車両が見つかりません。',
+  invalid_reference: '選択したスタッフ、店舗、または車両が利用できません。',
   invalid_request: '入力内容をご確認ください。',
   internal_error: 'システムエラーが発生しました。しばらくしてから再度お試しください。',
   site_mapping_conflict: 'ERP拠点が変更された車両があります。駐車場データの拠点割当を確認してください。',
   unauthorized: 'ログインの有効期限が切れました。再度ログインしてください。',
   account_unavailable: 'アカウントまたは所属店舗が無効になっています。',
+  employee_required: '担当スタッフを選択してください。',
+  invalid_employee: 'スタッフ名をご確認ください。',
   account_not_found: 'アカウントが見つかりません。',
   vehicle_not_found: '車両が見つかりません。',
   reservation_not_found: '予約が見つかりません。',
@@ -174,9 +177,13 @@ let query = '';
 let offset = 0;
 let statusFilter = '';
 let cachedSites: Site[] = [];
-let cachedRoles: Role[] = [];
 let cachedPermissions: Permission[] = [];
+let currentEmployees: Employee[] = [];
+let employeeSiteId = '';
 let currentReservations: Reservation[] = [];
+let pendingReservationTransition: {
+  reservation: Reservation; status: 'checked_in' | 'completed';
+} | null = null;
 let currentAccounts: Account[] = [];
 let currentVehicles: Vehicle[] = [];
 let isMobileNav = false;
@@ -306,14 +313,14 @@ function navItems(): { page: Page; title: string; icon: string; permission?: str
     { page: 'dashboard', title: '運営ダッシュボード', icon: 'dashboard' },
     { page: 'reservations', title: '予約・受付', icon: 'calendar', permission: 'reservations:read' },
     { page: 'sites', title: '店舗管理', icon: 'site', permission: 'sites:read' },
-    { page: 'accounts', title: 'スタッフ・アカウント', icon: 'people', permission: 'accounts:write' },
-    { page: 'roles', title: '権限管理', icon: 'roles', permission: 'accounts:write' },
     { page: 'vehicles', title: '車両管理', icon: 'vehicle', permission: 'vehicles:read' }
   ];
+  if (profile?.isAdmin) items.splice(3, 0, {
+    page: 'accounts', title: '店舗アカウント', icon: 'people'
+  });
   return items.filter((item) => (item.page === 'vehicles'
     ? can('vehicles:read') || can('parking:read')
-    : (!item.permission || can(item.permission))) &&
-    (!['accounts', 'roles'].includes(item.page) || profile?.site.type === 'headquarters'));
+    : (!item.permission || can(item.permission))));
 }
 function renderLogin() {
   document.documentElement.lang = 'ja';
@@ -436,7 +443,6 @@ async function loadPage() {
       case 'reservations': await renderReservations(); break;
       case 'sites': await renderSites(); break;
       case 'accounts': await renderAccounts(); break;
-      case 'roles': await renderRoles(); break;
       case 'vehicles': await renderVehicles(); break;
     }
   } catch (error) {
@@ -465,10 +471,13 @@ async function renderDashboard() {
   ]);
   cachedSites = sitesData.items;
   const upcoming = reservationsData.items.slice(0, 5);
-  setContent(`${pageHead('運営ダッシュボード', `${text(profile!.site.name)} · 店舗の運営状況`)}
+  setContent(`${pageHead('運営ダッシュボード', `${text(profile!.site.name)} · 店舗の運営状況`,
+    profile!.site.type !== 'headquarters'
+      ? `<button class="btn" data-action="employee-roster" data-site-id="${text(profile!.site.id)}">${icon('team')} スタッフ名簿</button>`
+      : '')}
     <div class="grid stat-grid">
       ${statCard('店舗数', stats.sites.total, `直営 ${stats.sites.direct} 店 · 加盟 ${stats.sites.franchise} 店`, 'sites')}
-      ${statCard('スタッフアカウント', stats.accounts.total, `有効 ${stats.accounts.active} 件`, 'team', 'green')}
+      ${statCard('店舗アカウント', stats.accounts.total, `有効 ${stats.accounts.active} 件`, 'team', 'green')}
       ${statCard('車両台数', stats.vehicles.total, `貸出可能 ${stats.vehicles.available} 台`, 'fleet')}
       ${statCard('貸出中', stats.vehicles.rented, `整備中 ${stats.vehicles.maintenance} 台`, 'calendar', 'orange')}
     </div>
@@ -512,14 +521,12 @@ async function renderSites() {
     ${pageTable(['店舗名 / コード', '店舗種別', '状態', '操作'], rows, '店舗が見つかりません')}`);
 }
 async function loadAdminLookups() {
-  if (cachedSites.length && cachedRoles.length && cachedPermissions.length) return;
-  const [sites, roles, permissions] = await Promise.all([
+  if (cachedSites.length && cachedPermissions.length) return;
+  const [sites, permissions] = await Promise.all([
     api<{ items: Site[] }>('/api/v1/sites'),
-    api<{ items: Role[] }>('/api/v1/roles'),
     api<{ items: Permission[] }>('/api/v1/permissions')
   ]);
   cachedSites = sites.items;
-  cachedRoles = roles.items;
   cachedPermissions = permissions.items;
 }
 async function renderAccounts() {
@@ -529,49 +536,23 @@ async function renderAccounts() {
   const result = await api<{ items: Account[] }>(`/api/v1/accounts?${params}`);
   currentAccounts = result.items;
   const rows = result.items.map((item) => `<tr>
-    <td class="primary-cell" data-label="スタッフ">${text(item.display_name)}<span class="secondary">${text(item.username)}</span></td>
-    <td data-label="所属店舗">${text(item.site_name)}<span class="secondary">${text(item.site_code)}</span></td>
-    <td data-label="役割">${jsonArray(item.role_ids).map((id) => {
-      const role = cachedRoles.find((candidate) => candidate.id === id);
-      return role ? `<span class="site-code">${text(role.name)}</span>` : '';
-    }).join(' ') || '<span class="secondary">未設定</span>'}</td>
+    <td class="primary-cell" data-label="店舗アカウント">${text(item.site_name)}<span class="secondary">${text(item.username)}</span></td>
+    <td data-label="店舗コード">${text(item.site_code)}</td>
     <td data-label="状態">${badge(item.status)}</td>
     <td data-label="操作"><button class="btn btn-sm" data-action="edit-account" data-id="${text(item.id)}">編集</button></td>
   </tr>`).join('');
-  setContent(`${pageHead('スタッフ・アカウント', 'スタッフごとにアカウントを作成し、権限を割り当てます', `<button class="btn btn-primary" data-modal="account">${icon('plus')} スタッフを追加</button>`)}
-    <div class="section-note">アカウントはスタッフごとに作成してください。権限は役割に応じて割り当てられ、各スタッフは所属店舗のデータのみを閲覧できます。</div>
-    ${renderToolbar('氏名、アカウント名、店舗名で検索')}
-    ${pageTable(['スタッフ / アカウント', '所属店舗', '役割', '状態', '操作'], rows, 'スタッフアカウントはありません')}
+  setContent(`${pageHead('店舗アカウント', '店舗ごとのログインと利用権限を管理', `<button class="btn btn-primary" data-modal="account">${icon('plus')} 店舗アカウントを追加</button>`)}
+    ${renderToolbar('店舗名、アカウント名で検索')}
+    ${pageTable(['店舗 / アカウント', '店舗コード', '状態', '操作'], rows, '店舗アカウントはありません')}
     ${pagination(result.items.length)}`);
 }
-async function renderRoles() {
-  const [roles, permissions] = await Promise.all([
-    api<{ items: Role[] }>('/api/v1/roles'),
-    api<{ items: Permission[] }>('/api/v1/permissions')
-  ]);
-  cachedRoles = roles.items;
-  cachedPermissions = permissions.items;
-  const permissionNames: Record<string, string> = {
-    'sites:read': '店舗情報の閲覧', 'sites:write': '店舗情報の管理',
-    'accounts:write': 'スタッフアカウントの管理',
-    'vehicles:read': '車両情報の閲覧', 'vehicles:write': '車両情報の管理',
-    'parking:read': '駐車場ボードの閲覧', 'parking:write': '駐車場ボードの操作',
-    'parking:admin': '駐車場ボードの設定管理',
-    'reservations:read': '予約・受付情報の閲覧',
-    'reservations:write': '予約の作成、貸出・返却手続き'
-  };
-  const rows = roles.items.map((role) => `<tr><td class="primary-cell" data-label="役割">${text(role.name)}<span class="secondary">${text(role.role_key)}</span></td><td data-label="権限">${jsonArray(role.permissions).map((permission) => `<span class="site-code">${permissionNames[permission] ?? 'その他の権限'}</span>`).join(' ')}</td><td data-label="操作"><span class="secondary">—</span></td></tr>`).join('');
-  setContent(`${pageHead('権限管理', '役割ごとに権限を設定し、スタッフに割り当てます', `<button class="btn btn-primary" data-modal="role">${icon('plus')} 役割を追加</button>`)}
-    ${pageTable(['役割名 / 識別子', '権限', '操作'], rows, '役割はありません')}
-    <div class="section-note" style="margin-top:14px">権限識別子は固定です。受付や店舗管理などの業務に必要な権限だけを割り当ててください。</div>`);
-}
-function siteOptions(selected = '') {
-  return cachedSites.map((site) => `<option value="${text(site.id)}" ${String(site.id) === selected ? 'selected' : ''}>${text(site.name)} · ${text(site.code)}</option>`).join('');
+function siteOptions(selected = '', includeHeadquarters = false) {
+  return cachedSites.filter((site) => includeHeadquarters || site.type !== 'headquarters')
+    .map((site) => `<option value="${text(site.id)}" ${String(site.id) === selected ? 'selected' : ''}>${text(site.name)} · ${text(site.code)}</option>`).join('');
 }
 function permissionChecks(selected: string[] = []) {
   const permissionNames: Record<string, string> = {
     'sites:read': '店舗情報の閲覧', 'sites:write': '店舗情報の管理',
-    'accounts:write': 'スタッフアカウントの管理',
     'vehicles:read': '車両情報の閲覧', 'vehicles:write': '車両情報の管理',
     'parking:read': '駐車場ボードの閲覧', 'parking:write': '駐車場ボードの操作',
     'parking:admin': '駐車場ボードの設定管理',
@@ -580,17 +561,13 @@ function permissionChecks(selected: string[] = []) {
   };
   const descriptions: Record<string, string> = {
     'sites:read': '店舗情報の閲覧', 'sites:write': '店舗情報の作成・管理',
-    'accounts:write': 'アカウントの作成と役割・権限の割り当て',
     'vehicles:read': '車両情報の閲覧', 'vehicles:write': '車両情報の作成・管理',
     'parking:read': '駐車場ボードの閲覧', 'parking:write': '車両位置・業務状況の更新',
     'parking:admin': '駐車場・クラス・状態などの設定管理',
     'reservations:read': '予約情報と受付状況の閲覧',
     'reservations:write': '予約の作成、貸出・返却手続き'
   };
-  return `<div class="check-grid">${cachedPermissions.map((permission) => `<label class="check-item"><input type="checkbox" name="permissions" value="${text(permission.permission_key)}" ${selected.includes(permission.permission_key) ? 'checked' : ''}><span>${permissionNames[permission.permission_key] ?? 'その他の権限'}<small>${descriptions[permission.permission_key] ?? '権限の説明はありません'}</small></span></label>`).join('')}</div>`;
-}
-function roleChecks(selected: string[] = []) {
-  return `<div class="check-grid">${cachedRoles.map((role) => `<label class="check-item"><input type="checkbox" name="roleIds" value="${text(role.id)}" ${selected.includes(String(role.id)) ? 'checked' : ''}><span>${text(role.name)}<small>${text(role.role_key)}</small></span></label>`).join('') || '<small>役割がありません。先に役割を作成してください。</small>'}</div>`;
+  return `<div class="check-grid">${cachedPermissions.filter(({ permission_key }) => permission_key !== 'accounts:write').map((permission) => `<label class="check-item"><input type="checkbox" name="permissions" value="${text(permission.permission_key)}" ${selected.includes(permission.permission_key) ? 'checked' : ''}><span>${permissionNames[permission.permission_key] ?? 'その他の権限'}<small>${descriptions[permission.permission_key] ?? '権限の説明はありません'}</small></span></label>`).join('')}</div>`;
 }
 async function renderVehicles() {
   if (!can('vehicles:read')) currentVehicleView = 'parking';
@@ -767,7 +744,7 @@ async function renderParkingBoard() {
     <div><h2>車両オプション</h2><form data-form="parking-option">
       <input name="name" maxlength="40" placeholder="オプション名" required><button class="btn btn-sm" type="submit">追加</button>
     </form>${board.vehicle_options.map((item) => `<div class="parking-catalog-row"><span>${text(item.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-option-delete" data-id="${text(item.id)}">削除</button></div>`).join('')}</div>
-    <div><h2>フランチャイズ店舗 / 拠点</h2><p class="secondary">旧Parkingの店舗は現在のERP拠点に属する店舗データへ移行します。フランチャイズ拠点とアカウントはERPの「拠点」「アカウント」から管理してください。</p>
+    <div><h2>フランチャイズ店舗 / 拠点</h2><p class="secondary">旧Parkingの店舗は現在のERP拠点に属する店舗データへ移行します。フランチャイズ拠点と店舗アカウントはERPの「店舗」「店舗アカウント」から管理してください。</p>
       <form data-form="parking-store"><input name="name" maxlength="120" placeholder="店舗名" required><button class="btn btn-sm" type="submit">追加</button></form>
       ${board.stores.map((store) => `<div class="parking-catalog-row"><span>${text(store.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-store-delete" data-id="${text(store.id)}">削除</button></div>`).join('') || '<p class="empty">店舗はありません</p>'}</div>
     <div><h2>拠点間距離</h2><p class="secondary">分を空欄にすると既存の距離を削除します。</p>
@@ -826,15 +803,76 @@ async function renderReservations() {
       <td data-label="お客様">${text(item.guest_name)}<span class="secondary">${text(item.guest_phone)}</span></td>
       <td data-label="利用期間">${moneylessDate(item.start_at)}<span class="secondary">～ ${moneylessDate(item.end_at)}</span></td>
       <td data-label="車両">${text(item.registration_number ?? '未割り当て')}<span class="secondary">${text(item.make ?? '')} ${text(item.model ?? '')}</span></td>
-      <td data-label="状態">${badge(item.status)}</td>
+      <td data-label="状態">${badge(item.status)}${item.checked_out_by_name ? `<span class="secondary">貸出担当：${text(item.checked_out_by_name)}</span>` : ''}${item.returned_by_name ? `<span class="secondary">返却担当：${text(item.returned_by_name)}</span>` : ''}</td>
       <td data-label="受付操作">${action}</td>
     </tr>`;
   }).join('');
   const filter = `<select class="filter-select" data-status><option value="">すべての予約</option>${['reserved','checked_in','completed','cancelled'].map((status) => `<option value="${status}" ${statusFilter === status ? 'selected' : ''}>${label(status)}</option>`).join('')}</select>`;
-  setContent(`${pageHead('予約・受付', '予約を登録し、貸出・返却手続きを行います', can('reservations:write') ? `<button class="btn btn-primary" data-modal="reservation">${icon('plus')} 予約を作成</button>` : '')}
+  const actions = [
+    profile!.site.type !== 'headquarters'
+      ? `<button class="btn" data-action="employee-roster" data-site-id="${text(profile!.site.id)}">${icon('team')} スタッフ名簿</button>`
+      : '',
+    can('reservations:write')
+      ? `<button class="btn btn-primary" data-modal="reservation">${icon('plus')} 予約を作成</button>`
+      : ''
+  ].join('');
+  setContent(`${pageHead('予約・受付', '貸出・返却時に担当スタッフを記録します', actions)}
     ${renderToolbar('予約番号、お客様、ナンバープレートで検索', filter)}
     ${pageTable(['予約番号 / 店舗', 'お客様情報', '利用期間', '車両', '状態', '操作'], rows, '予約はありません。来店時に受付を登録してください')}
     ${pagination(result.items.length)}`);
+}
+async function openEmployeeRoster(siteId: string) {
+  try {
+    const site = profile?.site.id === siteId
+      ? profile.site
+      : (await loadSitesIfMissing(), cachedSites.find((item) => item.id === siteId));
+    if (!site || site.type === 'headquarters') throw new Error('invalid_site');
+    const result = await api<{ items: Employee[] }>(
+      `/api/v1/employees?${new URLSearchParams({ siteId, includeDisabled: 'true' })}`
+    );
+    currentEmployees = result.items;
+    employeeSiteId = siteId;
+    modal = 'employees';
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+    setHtml(overlay, `<section class="modal employee-modal" role="dialog" aria-modal="true" aria-labelledby="employee-modal-title">
+      <header class="modal-head"><div><h2 id="employee-modal-title">スタッフ名簿</h2><p>${text(site.name)} · 貸出・返却の担当者選択に使います</p></div><button class="modal-close" data-action="close-modal" aria-label="閉じる">×</button></header>
+      <div class="modal-body">
+        <form class="employee-create" data-form="employee">
+          <input type="hidden" name="siteId" value="${text(siteId)}">
+          <label class="field"><span class="field-label">スタッフ名</span><input name="name" maxlength="120" required placeholder="氏名を入力"></label>
+          <button class="btn btn-primary" type="submit">${icon('plus')} 追加</button>
+        </form>
+        <div class="employee-list">${result.items.length ? result.items.map((employee) => `<div class="employee-row">
+          <span class="${employee.status === 'disabled' ? 'employee-disabled' : ''}">${text(employee.name)}${employee.status === 'disabled' ? '<small>（無効）</small>' : ''}</span>
+          <div><button class="btn btn-sm" data-action="employee-edit" data-id="${text(employee.id)}">編集</button>
+          <button class="btn btn-sm ${employee.status === 'active' ? 'btn-quiet' : ''}" data-action="employee-toggle" data-id="${text(employee.id)}" data-status="${employee.status === 'active' ? 'disabled' : 'active'}">${employee.status === 'active' ? '無効にする' : '再開'}</button></div>
+        </div>`).join('') : '<div class="empty">スタッフ名がまだ登録されていません</div>'}</div>
+      </div><footer class="modal-foot"><button type="button" class="btn" data-action="close-modal">閉じる</button></footer>
+    </section>`);
+    root.append(overlay);
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) closeModal();
+    });
+  } catch (error) {
+    pendingReservationTransition = null;
+    toast(humanError((error as Error).message), true);
+  }
+}
+async function openReservationTransition(reservation: Reservation, status: 'checked_in' | 'completed') {
+  const employees = await api<{ items: Employee[] }>(
+    `/api/v1/employees?${new URLSearchParams({ siteId: reservation.site_id })}`
+  );
+  const options = employees.items.map((employee) =>
+    `<option value="${text(employee.id)}">${text(employee.name)}</option>`
+  ).join('');
+  const actionName = status === 'checked_in' ? '貸出' : '返却';
+  modalTemplate(`${actionName}手続き`, `${text(reservation.registration_number ?? '')} · 担当スタッフを選択`, `
+    <input type="hidden" name="id" value="${text(reservation.id)}">
+    <input type="hidden" name="status" value="${status}">
+    ${selectField('employeeId', '担当スタッフ', `<option value="">スタッフを選択してください</option>${options}`)}
+    ${options ? '' : `<p class="section-note">先にスタッフ名簿へ担当者を登録してください。</p><button type="button" class="btn" data-action="employee-roster" data-site-id="${text(reservation.site_id)}">スタッフ名簿を開く</button>`}
+  `, 'reservation-transition', `${actionName}を確定`);
 }
 function field(name: string, title: string, type = 'text', value = '', placeholder = '', required = false, extra = '') {
   return `<div class="field ${extra}"><label for="f-${name}">${title}</label><input id="f-${name}" name="${name}" type="${type}" value="${text(value)}" placeholder="${text(placeholder)}" ${required ? 'required' : ''}></div>`;
@@ -855,10 +893,11 @@ function modalTemplate(title: string, subtitle: string, body: string, form: stri
 function closeModal() {
   $('.overlay')?.remove();
   modal = '';
+  pendingReservationTransition = null;
 }
 async function openModal(which: string, id = '') {
   try {
-    if (['account', 'role'].includes(which)) await loadAdminLookups();
+    if (['account'].includes(which)) await loadAdminLookups();
     if (which === 'site') {
       modalTemplate('店舗を追加', '直営店または加盟店を登録します', `<div class="form-grid">
         ${field('code', '店舗コード', 'text', '', '例：TKY-001', true)}
@@ -866,31 +905,28 @@ async function openModal(which: string, id = '') {
         ${field('name', '店舗名', 'text', '', '店舗名を入力してください', true, 'full')}
       </div>`, 'site');
     } else if (which === 'account') {
-      modalTemplate('スタッフアカウントを追加', '新しいスタッフのログインアカウントを作成します', `<div class="form-grid">
+      modalTemplate('店舗アカウントを追加', '店舗用のログインIDと利用権限を設定します', `<div class="form-grid">
         ${field('username', 'アカウント名', 'text', '', '半角英数字・記号 3～64 文字', true)}
-        ${field('displayName', '氏名', 'text', '', '氏名を入力してください', true)}
         ${field('password', '初期パスワード', 'password', '', '12 文字以上', true)}
         ${selectField('siteId', '所属店舗', `<option value="">店舗を選択してください</option>${siteOptions()}`)}
-        <div class="field full"><span class="field-label">役割</span>${roleChecks()}</div>
-        <div class="field full"><span class="field-label">追加権限（必要な場合のみ）</span>${permissionChecks()}</div>
+        <div class="field full"><span class="field-label">利用権限</span>${permissionChecks()}</div>
       </div>`, 'account');
     } else if (which === 'edit-account') {
       const account = currentAccounts.find((item) => item.id === id);
       if (!account) throw new Error('not_found');
-      modalTemplate('スタッフアカウントを編集', `${text(account.username)} · 所属店舗、権限、状態を更新`, `<input type="hidden" name="id" value="${text(account.id)}"><div class="form-grid">
-        ${field('displayName', '氏名', 'text', account.display_name, '', true)}
-        ${selectField('siteId', '所属店舗', siteOptions(account.site_id))}
+      modalTemplate('店舗アカウントを編集', `${text(account.site_name)} · ${text(account.username)}`, `<input type="hidden" name="id" value="${text(account.id)}"><div class="form-grid">
         ${selectField('status', 'アカウントの状態', `<option value="active" ${account.status === 'active' ? 'selected' : ''}>有効</option><option value="disabled" ${account.status === 'disabled' ? 'selected' : ''}>無効</option>`)}
         ${field('password', 'パスワードを再設定（任意）', 'password', '', '空欄の場合は変更しません')}
-        <div class="field full"><span class="field-label">役割</span>${roleChecks(jsonArray(account.role_ids))}</div>
-        <div class="field full"><span class="field-label">追加権限</span>${permissionChecks(jsonArray(account.permissions))}</div>
+        <div class="field full"><span class="field-label">利用権限</span>${permissionChecks(jsonArray(account.permissions))}</div>
       </div>`, 'edit-account');
-    } else if (which === 'role') {
-      modalTemplate('役割を追加', '役割コードを設定し、必要な権限を選択してください', `<div class="form-grid">
-        ${field('roleKey', '役割コード', 'text', '', '例：front_desk', true)}
-        ${field('name', '役割名', 'text', '', '例：フロント受付', true)}
-        <div class="field full"><span class="field-label">権限</span>${permissionChecks()}</div>
-      </div>`, 'role');
+    } else if (which === 'employee-edit') {
+      const employee = currentEmployees.find((item) => item.id === id);
+      if (!employee) throw new Error('not_found');
+      modalTemplate('スタッフ名を編集', '貸出・返却の記録に表示する名前を変更します', `
+        <input type="hidden" name="id" value="${text(employee.id)}">
+        <input type="hidden" name="siteId" value="${text(employee.site_id)}">
+        ${field('name', 'スタッフ名', 'text', employee.name, '氏名を入力', true)}
+      `, 'employee-edit');
     } else if (which === 'vehicle') {
       await loadSitesIfMissing();
       modalTemplate('車両を追加', '車両情報を登録します', `<div class="form-grid">
@@ -1151,20 +1187,42 @@ async function handleSubmit(event: Event) {
       await api('/api/v1/sites', { method: 'POST', body: JSON.stringify({ code: value('code'), name: value('name'), type: value('type') }) });
     } else if (kind === 'account') {
       await api('/api/v1/accounts', { method: 'POST', body: JSON.stringify({
-        siteId: value('siteId'), username: value('username'), displayName: value('displayName'),
-        password: value('password'), roleIds: checkedValues(form, 'roleIds'), permissions: checkedValues(form, 'permissions')
+        siteId: value('siteId'), username: value('username'),
+        password: value('password'), permissions: checkedValues(form, 'permissions')
       }) });
     } else if (kind === 'edit-account') {
       const payload: Record<string, unknown> = {
-        displayName: value('displayName'), siteId: value('siteId'), status: value('status'),
-        roleIds: checkedValues(form, 'roleIds'), permissions: checkedValues(form, 'permissions')
+        status: value('status'),
+        permissions: checkedValues(form, 'permissions')
       };
       if (value('password')) payload.password = value('password');
       await api(`/api/v1/accounts/${encodeURIComponent(value('id'))}`, { method: 'PATCH', body: JSON.stringify(payload) });
-    } else if (kind === 'role') {
-      await api('/api/v1/roles', { method: 'POST', body: JSON.stringify({
-        roleKey: value('roleKey'), name: value('name'), permissions: checkedValues(form, 'permissions')
-      }) });
+    } else if (kind === 'employee') {
+      await api('/api/v1/employees', {
+        method: 'POST', body: JSON.stringify({ siteId: value('siteId'), name: value('name') })
+      });
+      const siteId = value('siteId');
+      const transition = pendingReservationTransition;
+      pendingReservationTransition = null;
+      closeModal();
+      toast('スタッフ名を追加しました。');
+      if (transition) await openReservationTransition(transition.reservation, transition.status);
+      else await openEmployeeRoster(siteId);
+      return;
+    } else if (kind === 'employee-edit') {
+      await api(`/api/v1/employees/${encodeURIComponent(value('id'))}`, {
+        method: 'PATCH', body: JSON.stringify({ siteId: value('siteId'), name: value('name') })
+      });
+      const siteId = value('siteId');
+      closeModal();
+      toast('スタッフ名を更新しました。');
+      await openEmployeeRoster(siteId);
+      return;
+    } else if (kind === 'reservation-transition') {
+      await api(`/api/v1/reservations/${encodeURIComponent(value('id'))}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: value('status'), employeeId: value('employeeId') })
+      });
     } else if (kind === 'vehicle') {
       await api('/api/v1/vehicles', { method: 'POST', body: JSON.stringify({
         registrationNumber: value('registrationNumber'), vin: value('vin') || undefined,
@@ -1302,7 +1360,6 @@ async function handleSubmit(event: Event) {
     closeModal();
     toast('保存しました。');
     if (kind === 'site') cachedSites = [];
-    if (kind === 'role') cachedRoles = [];
     await loadPage();
   } catch (error) {
     toast(humanError((error as Error).message), true);
@@ -1381,6 +1438,37 @@ async function handleClick(event: MouseEvent) {
   } else if (target.dataset.action === 'parking-board') {
     currentVehicleView = 'parking';
     await renderVehicles();
+  } else if (target.dataset.action === 'employee-roster') {
+    if (modal === 'reservation-transition') {
+      const form = $('form[data-form="reservation-transition"]');
+      const reservation = currentReservations.find((item) =>
+        item.id === $<HTMLInputElement>('[name="id"]', form ?? document)?.value);
+      const status = $<HTMLInputElement>('[name="status"]', form ?? document)?.value;
+      let transition: typeof pendingReservationTransition = null;
+      if (reservation && status === 'checked_in') transition = { reservation, status: 'checked_in' };
+      else if (reservation && status === 'completed') transition = { reservation, status: 'completed' };
+      closeModal();
+      pendingReservationTransition = transition;
+      await openEmployeeRoster(target.dataset.siteId ?? profile!.site.id);
+      return;
+    } else if (modal) closeModal();
+    await openEmployeeRoster(target.dataset.siteId ?? profile!.site.id);
+  } else if (target.dataset.action === 'employee-edit') {
+    closeModal();
+    await openModal('employee-edit', target.dataset.id!);
+  } else if (target.dataset.action === 'employee-toggle') {
+    const siteId = employeeSiteId;
+    closeModal();
+    try {
+      await api(`/api/v1/employees/${encodeURIComponent(target.dataset.id!)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ siteId, status: target.dataset.status })
+      });
+      toast(target.dataset.status === 'active' ? 'スタッフ名を再開しました。' : 'スタッフ名を無効にしました。');
+      await openEmployeeRoster(siteId);
+    } catch (error) {
+      toast(humanError((error as Error).message), true);
+    }
   } else if (target.dataset.action === 'parking-inspect3d') {
     openParkingInspection(Number(target.dataset.id));
   } else if (target.dataset.action === 'parking-inspect3d-close') {
@@ -1495,15 +1583,23 @@ async function handleClick(event: MouseEvent) {
   } else if (target.dataset.action?.startsWith('reservation-')) {
     const item = currentReservations.find((reservation) => reservation.id === target.dataset.id);
     if (!item) return;
-    const status = target.dataset.action === 'reservation-checkin' ? 'checked_in'
-      : target.dataset.action === 'reservation-return' ? 'completed' : 'cancelled';
-    const prompt = status === 'checked_in' ? `${item.guest_name} 様への貸出手続きを行いますか？車両 ${item.registration_number ?? ''} は貸出中になります。`
-      : status === 'completed' ? `${item.guest_name} 様の返却を確認しますか？車両は貸出可能になります。`
-        : `${item.guest_name} 様の予約をキャンセルしますか？`;
+    if (target.dataset.action === 'reservation-checkin' ||
+        target.dataset.action === 'reservation-return') {
+      try {
+        await openReservationTransition(item,
+          target.dataset.action === 'reservation-checkin' ? 'checked_in' : 'completed');
+      } catch (error) {
+        toast(humanError((error as Error).message), true);
+      }
+      return;
+    }
+    const prompt = `${item.guest_name} 様の予約をキャンセルしますか？`;
     if (!confirmAction(prompt)) return;
     try {
-      await api(`/api/v1/reservations/${encodeURIComponent(item.id)}`, { method: 'PATCH', body: JSON.stringify({ status }) });
-      toast(status === 'checked_in' ? '貸出手続きが完了しました。' : status === 'completed' ? '返却手続きが完了しました。' : '予約をキャンセルしました。');
+      await api(`/api/v1/reservations/${encodeURIComponent(item.id)}`, {
+        method: 'PATCH', body: JSON.stringify({ status: 'cancelled' })
+      });
+      toast('予約をキャンセルしました。');
       await loadPage();
     } catch (error) { toast(humanError((error as Error).message), true); }
   }

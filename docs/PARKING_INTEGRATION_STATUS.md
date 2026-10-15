@@ -7,9 +7,12 @@ claim that a production data migration or cutover has been completed.
 
 - Parking board routes and persistence use `parking_*` tables in the ERP MySQL
   schema, the ERP account/JWT, stable parking permissions, and ERP site scope.
-- ERP account administration is the only account system. Legacy Parking
-  passwords are intentionally not imported; users receive ERP accounts and
-  parking permissions through the ERP role/site administration.
+- ERP account administration is the only login system. The owner administrator
+  manages shop logins and their permissions; store employees are names in a
+  site-scoped roster, not separate login accounts. Legacy Parking passwords are
+  intentionally not imported.
+- Store accounts can maintain their own employee-name roster. Rental checkout
+  and return records retain the selected employee name as an audit snapshot.
 - The primary headquarters administrator is marked as the owner administrator
   and receives the Japanese/Simplified Chinese language switch; all other
   accounts stay in Japanese.
@@ -35,11 +38,11 @@ claim that a production data migration or cutover has been completed.
   caches API responses or authenticated business data; data operations require
   a network connection.
 - Deployment and migration documents include cutover checks, data retention,
-  and rollback cautions. Version is `0.4.0`.
+  and rollback cautions. Version is `0.5.0`.
 
 ## Verified in this workspace
 
-- ERP automated tests: 64 passed.
+- ERP automated tests: 71 passed.
 - Legacy Parking regression tests: 31 passed.
 - ERP frontend typecheck and production bundle build passed.
 - Parking server endpoints for the PWA manifest, service worker, and icon have

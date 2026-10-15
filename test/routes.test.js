@@ -14,6 +14,7 @@ async function makeApp(user) {
   const calls = {
     vehicleList: null, createdVehicle: null, reservationList: null,
     createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
+    createdAccount: null, employeeList: null, createdEmployee: null, updatedEmployee: null,
     parkingSyncVehicles: null, parkingSyncResult: { created: 1, updated: 0, synced: 1 },
     parkingSyncError: null,
     parkingBootstrapSiteScope: null, parkingUpdate: null,
@@ -38,9 +39,16 @@ async function makeApp(user) {
       listPermissions: async () => []
     },
     admin: {
-      listSites: async () => [],
+      listSites: async (siteId) => siteId
+        ? [{ id: siteId, code: 'SHOP', name: 'Shop', type: 'direct', status: 'active' }]
+        : [],
+      listAccounts: async () => [],
       listRoles: async () => [],
-      listPermissions: async () => [],
+      listPermissions: async () => [{ permission_key: 'reservations:read', description: 'Read reservations' }],
+      createAccount: async (account) => {
+        calls.createdAccount = account;
+        return { id: '99', ...account };
+      },
       dashboardStats: async (siteId) => {
         calls.dashboardSiteScope = siteId;
         return { sites: {}, accounts: {}, vehicles: {} };
@@ -71,6 +79,20 @@ async function makeApp(user) {
       transition: async (reservation) => {
         calls.transitionedReservation = reservation;
         return reservation;
+      }
+    },
+    employees: {
+      list: async (filters) => {
+        calls.employeeList = filters;
+        return [{ id: '8', site_id: filters.siteId, name: 'Store Staff', status: 'active' }];
+      },
+      create: async (employee) => {
+        calls.createdEmployee = employee;
+        return { id: '8', ...employee, status: 'active' };
+      },
+      update: async (employee) => {
+        calls.updatedEmployee = employee;
+        return { id: employee.id, status: employee.status ?? 'updated' };
       }
     },
     auth: { login: async () => null },
@@ -221,7 +243,11 @@ test('store users cannot manage accounts even if a token has the permission clai
     sub: '14',
     siteId: '2',
     siteType: 'franchise',
-    permissions: ['accounts:write']
+    permissions: ['accounts:write'],
+    profile: {
+      id: '14', is_owner_admin: 0, status: 'active', site_status: 'active',
+      site_id: '2', site_type: 'franchise'
+    }
   });
   t.after(() => app.close());
 
@@ -234,6 +260,86 @@ test('store users cannot manage accounts even if a token has the permission clai
   assert.deepEqual(response.json(), { error: 'forbidden' });
 });
 
+test('only the owner-admin can manage store login accounts and permissions', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: [],
+    profile: {
+      id: '1', is_owner_admin: 1, status: 'active', site_status: 'active',
+      site_id: '1', site_type: 'headquarters'
+    }
+  });
+  t.after(() => app.close());
+
+  const headers = { authorization: ['Bearer', token].join(' ') };
+  const list = await app.inject({ method: 'GET', url: '/api/v1/accounts', headers });
+  assert.equal(list.statusCode, 200);
+  const create = await app.inject({
+    method: 'POST', url: '/api/v1/accounts', headers,
+    payload: {
+      siteId: '2', username: 'shop-login', password: 'long-enough-password',
+      permissions: ['reservations:read']
+    }
+  });
+  assert.equal(create.statusCode, 201);
+  assert.equal(calls.createdAccount.displayName, 'Shop');
+  assert.equal(calls.createdAccount.siteId, '2');
+
+  const permissions = await app.inject({
+    method: 'GET', url: '/api/v1/permissions', headers
+  });
+  assert.equal(permissions.statusCode, 200);
+});
+
+test('store accounts manage employee names only within their own site', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: [],
+    profile: {
+      id: '14', is_owner_admin: 0, status: 'active', site_status: 'active',
+      site_id: '2', site_type: 'direct'
+    }
+  });
+  t.after(() => app.close());
+
+  const headers = { authorization: ['Bearer', token].join(' ') };
+  const list = await app.inject({
+    method: 'GET', url: '/api/v1/employees?siteId=99&includeDisabled=true', headers
+  });
+  assert.equal(list.statusCode, 200);
+  assert.equal(calls.employeeList.siteId, '2');
+  assert.equal(calls.employeeList.includeDisabled, true);
+
+  const create = await app.inject({
+    method: 'POST', url: '/api/v1/employees', headers,
+    payload: { siteId: '99', name: 'Staff A' }
+  });
+  assert.equal(create.statusCode, 201);
+  assert.deepEqual(calls.createdEmployee, { siteId: '2', name: 'Staff A' });
+
+  const update = await app.inject({
+    method: 'PATCH', url: '/api/v1/employees/8', headers,
+    payload: { siteId: '99', name: 'Staff B' }
+  });
+  assert.equal(update.statusCode, 200);
+  assert.deepEqual(calls.updatedEmployee, { id: '8', siteId: '2', name: 'Staff B' });
+});
+
+test('headquarters accounts without the owner marker cannot manage employee names', async (t) => {
+  const { app, token } = await makeApp({
+    sub: '2', siteId: '1', siteType: 'headquarters', permissions: ['accounts:write'],
+    profile: {
+      id: '2', is_owner_admin: 0, status: 'active', site_status: 'active',
+      site_id: '1', site_type: 'headquarters'
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'GET', url: '/api/v1/employees?siteId=2',
+    headers: { authorization: ['Bearer', token].join(' ') }
+  });
+  assert.equal(response.statusCode, 403);
+});
+
 test('reservation endpoints scope reception staff to their own site', async (t) => {
   const { app, token, calls } = await makeApp({
     sub: '14',
@@ -243,7 +349,7 @@ test('reservation endpoints scope reception staff to their own site', async (t) 
   });
   t.after(() => app.close());
 
-  const headers = { authorization: `Bearer ${token}` };
+  const headers = { authorization: ["Bearer", token].join(" ") };
   const list = await app.inject({
     method: 'GET', url: '/api/v1/reservations?siteId=99&search=Guest', headers
   });
@@ -266,10 +372,18 @@ test('reservation endpoints scope reception staff to their own site', async (t) 
 
   const transition = await app.inject({
     method: 'PATCH', url: '/api/v1/reservations/23', headers,
-    payload: { status: 'checked_in' }
+    payload: { status: 'checked_in', employeeId: '8' }
   });
   assert.equal(transition.statusCode, 200);
   assert.equal(calls.transitionedReservation.siteId, '2');
+  assert.equal(calls.transitionedReservation.employeeId, '8');
+
+  const missingEmployee = await app.inject({
+    method: 'PATCH', url: '/api/v1/reservations/23', headers,
+    payload: { status: 'completed' }
+  });
+  assert.equal(missingEmployee.statusCode, 400);
+  assert.deepEqual(missingEmployee.json(), { error: 'employee_required' });
 
   const dashboard = await app.inject({
     method: 'GET', url: '/api/v1/dashboard/stats', headers
