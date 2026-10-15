@@ -8,7 +8,7 @@
 
 ## 新規または既存ERPのセットアップ
 
-1. ERP の MySQL 8.0/8.4 または MariaDB 10.11 データベースと `.env` を用意します。
+1. ERP の MySQL 8.0/8.4 または MariaDB 10.11（10.11.10を含む）データベースと `.env` を用意します。
    `DB_*`、`JWT_SECRET`（32バイト以上）、`JWT_ISSUER`、`JWT_AUDIENCE`、
    `PUBLIC_BASE_URL` を設定してください。
 2. `npm ci` と `npm run migrate` を実行します。Migration `003_parking_mysql.sql` は

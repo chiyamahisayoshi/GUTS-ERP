@@ -304,13 +304,33 @@ export async function validateImportMapping({ snapshot, mapping, query }) {
       }
     }
   }
-  const externalVehicleIds = new Set();
+  const externalVehicleIds = [];
   for (const vehicle of vehicleSourceRows) {
     if (vehicle.external_id === null || vehicle.external_id === undefined) continue;
-    const siteId = tenantSites.get(String(vehicle.tenant_id));
-    const key = `${siteId}:${String(vehicle.external_id).normalize('NFKC').toLocaleLowerCase('en-US')}`;
-    if (externalVehicleIds.has(key)) fail(`Duplicate external_id in vehicles at ERP site ${siteId}.`);
-    externalVehicleIds.add(key);
+    const externalId = String(vehicle.external_id);
+    if ([...externalId].length > 255) {
+      fail(`external_id in legacy vehicle ${vehicle.tenant_id}:${vehicle.id} exceeds the MySQL 255-character limit.`);
+    }
+    externalVehicleIds.push({
+      siteId: tenantSites.get(String(vehicle.tenant_id)),
+      externalId
+    });
+  }
+  const seenExternalVehicleIds = new Set();
+  for (let offset = 0; offset < externalVehicleIds.length; offset += 250) {
+    const batch = externalVehicleIds.slice(offset, offset + 250);
+    const expressions = batch.map(() =>
+      'SELECT ? AS row_index, HEX(WEIGHT_STRING(CONVERT(? USING utf8mb4) COLLATE utf8mb4_unicode_ci AS CHAR(255))) AS collation_key');
+    const params = batch.flatMap((vehicle, index) => [index, vehicle.externalId]);
+    const rows = await query(expressions.join(' UNION ALL '), params);
+    for (const row of rows) {
+      const vehicle = batch[Number(row.row_index)];
+      const key = `${vehicle.siteId}:${row.collation_key}`;
+      if (seenExternalVehicleIds.has(key)) {
+        fail(`Duplicate external_id in vehicles at ERP site ${vehicle.siteId}.`);
+      }
+      seenExternalVehicleIds.add(key);
+    }
   }
   return { tenantSites, accountMap, vehicleMap };
 }
@@ -323,8 +343,8 @@ export async function importParkingSnapshot({
   const maps = await validateImportMapping({
     snapshot,
     mapping,
-    query: async (sql) => {
-      const [rows] = await connection.execute(sql);
+    query: async (sql, params) => {
+      const [rows] = await connection.execute(sql, params);
       return rows;
     }
   });

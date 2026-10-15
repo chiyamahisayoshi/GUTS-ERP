@@ -80,7 +80,15 @@ after(async () => {
 });
 
 function databaseQuery({ sites = [], accounts = [], vehicles = [] } = {}) {
-  return async (sql) => {
+  return async (sql, params = []) => {
+    if (sql.includes('WEIGHT_STRING')) {
+      return params.filter((_, index) => index % 2 === 0).map((rowIndex, index) => {
+        const externalId = String(params[index * 2 + 1]);
+        const collationKey = externalId.normalize('NFD')
+          .replace(/\p{Diacritic}/gu, '').toLocaleLowerCase('en-US').trim();
+        return { row_index: rowIndex, collation_key: Buffer.from(collationKey).toString('hex') };
+      });
+    }
     if (sql === 'SELECT id, status FROM sites') return sites;
     if (sql === 'SELECT id, site_id, status FROM accounts') return accounts;
     if (sql === 'SELECT id, site_id FROM vehicles') return vehicles;
@@ -108,9 +116,10 @@ function mysqlMock(query) {
     async commit() { transaction = false; commits += 1; },
     async rollback() { transaction = false; rollbacks += 1; },
     async execute(sql, params = []) {
+      if (sql.includes('WEIGHT_STRING')) return [await query(sql, params)];
       if (sql.startsWith('SELECT id, status FROM sites') ||
           sql.startsWith('SELECT id, site_id, status FROM accounts') ||
-          sql.startsWith('SELECT id, site_id FROM vehicles')) return [await query(sql)];
+          sql.startsWith('SELECT id, site_id FROM vehicles')) return [await query(sql, params)];
       if (sql.startsWith('SELECT source_digest FROM parking_import_runs')) {
         return [[...(runs.has(`${params[0]}:${params[1]}`) ? [{ source_digest: params[0] }] : [])]];
       }
@@ -217,7 +226,8 @@ test('preflight rejects duplicate external vehicle IDs at the mapped site', asyn
     }))
   };
   const vehicles = duplicateSnapshot.tables.find((table) => table.source === 'vehicles').rows;
-  vehicles[1].external_id = vehicles[0].external_id;
+  vehicles[0].external_id = 'Café-001';
+  vehicles[1].external_id = 'CAFE-001';
 
   await assert.rejects(validateImportMapping({
     snapshot: duplicateSnapshot,
@@ -228,6 +238,29 @@ test('preflight rejects duplicate external vehicle IDs at the mapped site', asyn
       vehicles: []
     })
   }), /Duplicate external_id in vehicles at ERP site 3/);
+});
+
+test('preflight rejects external IDs beyond the destination column limit', async () => {
+  const snapshot = readParkingSnapshot(sourcePath);
+  const oversizedSnapshot = {
+    ...snapshot,
+    tables: snapshot.tables.map((table) => ({
+      ...table,
+      rows: table.rows.map((row) => ({ ...row }))
+    }))
+  };
+  oversizedSnapshot.tables.find((table) => table.source === 'vehicles').rows[0].external_id =
+    'x'.repeat(256);
+
+  await assert.rejects(validateImportMapping({
+    snapshot: oversizedSnapshot,
+    mapping: { tenants: { '1': '3' }, accounts: { '1:7': '20' } },
+    query: databaseQuery({
+      sites: [{ id: '3', status: 'active' }],
+      accounts: [{ id: '20', site_id: '3', status: 'active' }],
+      vehicles: []
+    })
+  }), /exceeds the MySQL 255-character limit/);
 });
 
 test('source preflight rejects cross-tenant vehicle-to-location references', () => {
