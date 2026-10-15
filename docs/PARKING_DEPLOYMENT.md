@@ -1,5 +1,9 @@
 # ERP 駐車場ボードのデプロイ
 
+ERP はセマンティックバージョニングを使用します。互換性を保つバグ修正ではpatch、
+後方互換の機能追加ではminor、互換性を壊す変更ではmajorを更新し、`package.json` と
+`package-lock.json` のバージョンを一致させます。
+
 駐車場ボードは ERP Fastify プロセス内で動作し、ERP と同じ MySQL データベースの
 `parking_*` テーブルを使用します。ログイン、JWT、拠点スコープ、権限は ERP と共通です。
 本番用に `apps/parking` の Node/SQLite プロセス、PM2 ecosystem、別のログイン情報、
