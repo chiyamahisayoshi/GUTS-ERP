@@ -49,7 +49,25 @@
 
 门店创建和账号/角色/权限管理仅限总部账号。车辆按门店隔离，总部账号可处理全店数据。
 
-## Debian 12 + 宝塔部署
+## 一键部署（推荐）
+
+前提：宝塔里已安装并启动 MySQL 8.4，并在 `[mysqld]` 加了 `bind-address = 127.0.0.1`。用 root 执行（仓库为私有，需要只读 GitHub 令牌，脚本会提示）：
+
+```bash
+curl -fsSL -H "Authorization: token <令牌>" https://raw.githubusercontent.com/chiyamahisayoshi/GUTS-ERP/main/deploy/install.sh -o install.sh && bash install.sh
+```
+
+脚本会安装 Node 24 与 PM2、拉取代码、自动建库和专用账号、生成 `.env` 与随机密钥、迁移、创建管理员（密码只显示一次）、PM2 开机自启，并安装 `erp` 命令：
+
+| 命令 | 作用 |
+|------|------|
+| `erp update` | 拉取最新代码、迁移、平滑重启；失败自动回滚 |
+| `erp status` / `erp logs` / `erp restart` | 查看状态/日志/重启 |
+| `erp domain https://域名` | 修改域名并重启 |
+
+之后只需在宝塔「网站」添加站点、申请 HTTPS，并反向代理到 `http://127.0.0.1:3000`。数据库连接信息在 `/www/wwwroot/guts-erp/.env`（修改后 `erp restart`）。
+
+## Debian 12 + 宝塔手动部署
 
 1. 在宝塔安装 Node.js 24、MySQL 8.4 和 Nginx。MySQL 配置 `bind-address = 127.0.0.1`，然后重启 MySQL，确保数据库不对公网监听。
 2. 创建数据库和专用应用账号（密码请换成随机长密码）：
