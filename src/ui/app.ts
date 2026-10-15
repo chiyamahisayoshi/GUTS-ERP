@@ -90,6 +90,12 @@ const humanError = (code: string) => ({
   invalid_reference: '選択した店舗、役割、または車両が見つかりません。',
   invalid_request: '入力内容をご確認ください。',
   internal_error: 'システムエラーが発生しました。しばらくしてから再度お試しください。',
+  parking_not_configured: '駐車場連携が設定されていません。管理者にお問い合わせください。',
+  parking_sync_failed: '駐車場システムへの同期に失敗しました。',
+  parking_invalid_response: '駐車場システムから車両一覧を取得できませんでした。',
+  parking_upstream_error: '駐車場システムへの接続に失敗しました。',
+  parking_unavailable: '駐車場システムに接続できませんでした。',
+  parking_legacy_mapping_conflict: 'Parking に ERP 車両IDと一致しない既存車両があります。バックアップと外部IDの照合後に同期してください。',
   unauthorized: 'ログインの有効期限が切れました。再度ログインしてください。',
   account_unavailable: 'アカウントまたは所属店舗が無効になっています。',
   account_not_found: 'アカウントが見つかりません。',
@@ -107,6 +113,7 @@ const humanError = (code: string) => ({
 let token = sessionStorage.getItem('guts_erp_token') || '';
 let profile: Profile | null = null;
 let currentPage: Page = 'dashboard';
+let currentVehicleView: 'list' | 'parking' = 'list';
 let modal = '';
 let query = '';
 let offset = 0;
@@ -134,7 +141,7 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
     throw new Error('unauthorized');
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
   return data as T;
 }
 function toast(message: string, isError = false) {
@@ -383,6 +390,12 @@ function roleChecks(selected: string[] = []) {
   return `<div class="check-grid">${cachedRoles.map((role) => `<label class="check-item"><input type="checkbox" name="roleIds" value="${text(role.id)}" ${selected.includes(String(role.id)) ? 'checked' : ''}><span>${text(role.name)}<small>${text(role.role_key)}</small></span></label>`).join('') || '<small>役割がありません。先に役割を作成してください。</small>'}</div>`;
 }
 async function renderVehicles() {
+  if (currentVehicleView === 'parking') {
+    setContent(`${pageHead('車両管理', '車両の配置・洗車・給油・修理状況を管理', '<button class="btn btn-sm" data-action="vehicle-list">車両一覧へ戻る</button>')}
+      <div class="section-note">駐車場システムの専用アカウントでログインしてください。ERP のログイン情報は共有されません。</div>
+      <iframe title="駐車場配置ボード" src="/parking/" style="display:block;width:100%;height:78vh;min-height:560px;border:1px solid #dce3ea;border-radius:12px;background:#fff"></iframe>`);
+    return;
+  }
   await loadSitesIfMissing();
   const params = new URLSearchParams({ limit: '50', offset: String(offset) });
   if (statusFilter) params.set('status', statusFilter);
@@ -397,7 +410,14 @@ async function renderVehicles() {
     <td data-label="操作">${can('vehicles:write') ? `<button class="btn btn-sm" data-action="edit-vehicle" data-id="${text(item.id)}">編集</button>` : ''}</td>
   </tr>`).join('');
   const filter = `<select class="filter-select" data-status><option value="">すべての状態</option>${['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${statusFilter === status ? 'selected' : ''}>${label(status)}</option>`).join('')}</select>`;
-  setContent(`${pageHead('車両管理', '車両情報と稼働状況を管理', can('vehicles:write') ? `<button class="btn btn-primary" data-modal="vehicle">${icon('plus')} 車両を追加</button>` : '')}
+  const actions = [
+    '<button class="btn" data-action="parking-board">駐車場配置</button>',
+    ...(can('vehicles:write') && profile!.site.type === 'headquarters' ? [
+      '<button class="btn" data-action="sync-parking">ERP車両を同期</button>',
+      `<button class="btn btn-primary" data-modal="vehicle">${icon('plus')} 車両を追加</button>`
+    ] : [])
+  ].join('');
+  setContent(`${pageHead('車両管理', '車両情報と稼働状況を管理', actions)}
     ${renderToolbar('ナンバープレート、メーカー、車種で検索', filter)}
     ${pageTable(['車両 / ナンバープレート', '所属店舗', '状態', '固定ID', '操作'], rows, '車両が見つかりません')}
     ${pagination(result.items.length)}`);
@@ -615,7 +635,30 @@ async function handleClick(event: MouseEvent) {
   } else if (target.dataset.action === 'close-modal') {
     closeModal();
   } else if (target.dataset.action === 'logout') {
+    void fetch('/api/v1/parking/session', { method: 'DELETE' });
     token = ''; profile = null; sessionStorage.removeItem('guts_erp_token'); renderLogin();
+  } else if (target.dataset.action === 'parking-board') {
+    try {
+      await api('/api/v1/parking/session', { method: 'POST' });
+      currentVehicleView = 'parking';
+      await renderVehicles();
+    } catch (error) {
+      toast((error as Error).message, true);
+    }
+  } else if (target.dataset.action === 'vehicle-list') {
+    currentVehicleView = 'list';
+    await renderVehicles();
+  } else if (target.dataset.action === 'sync-parking') {
+    const button = target as HTMLButtonElement;
+    button.disabled = true;
+    try {
+      const result = await api<{ synced: number }>('/api/v1/parking/vehicles:sync', { method: 'POST' });
+      toast(`${result.synced.toLocaleString('ja-JP')} 台の車両を駐車場システムへ同期しました。`);
+    } catch (error) {
+      toast((error as Error).message, true);
+    } finally {
+      button.disabled = false;
+    }
   } else if (target.dataset.action === 'refresh') {
     await loadPage();
   } else if (target.dataset.action === 'menu') {

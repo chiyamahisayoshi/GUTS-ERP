@@ -13,6 +13,8 @@ import { createAdminRepository } from './repositories/admin-repository.js';
 import { createVehicleRepository } from './repositories/vehicle-repository.js';
 import { createReservationRepository } from './repositories/reservation-repository.js';
 import { createAuthService } from './services/auth-service.js';
+import { createParkingIntegration } from './services/parking-integration.js';
+import { registerParkingProxy } from './parking-proxy.js';
 import { registerRoutes } from './routes.js';
 
 export async function buildApp({ config = getConfig(), pool, logger = true } = {}) {
@@ -63,7 +65,12 @@ export async function buildApp({ config = getConfig(), pool, logger = true } = {
   const vehicles = createVehicleRepository(db);
   const reservations = createReservationRepository(db);
   const auth = createAuthService({ accounts, jwt: app.jwt, config });
-  registerRoutes(app, { accounts, admin, vehicles, reservations, auth });
+  const parking = createParkingIntegration({
+    apiUrl: config.parking?.apiUrl,
+    apiKey: config.parking?.apiKey
+  });
+  registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking });
+  registerParkingProxy(app, config.parking?.backendUrl || 'http://127.0.0.1:8001');
 
   app.setErrorHandler((error, request, reply) => {
     if (error.validation) {

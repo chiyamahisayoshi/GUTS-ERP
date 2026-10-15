@@ -13,7 +13,8 @@ const jwtConfig = {
 async function makeApp(user) {
   const calls = {
     vehicleList: null, createdVehicle: null, reservationList: null,
-    createdReservation: null, transitionedReservation: null, dashboardSiteScope: null
+    createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
+    parkingSyncVehicles: null
   };
   const app = Fastify({ logger: false });
   await app.register(jwt, {
@@ -49,7 +50,8 @@ async function makeApp(user) {
         calls.createdVehicle = vehicle;
         return vehicle;
       },
-      update: async () => null
+      update: async () => null,
+      listForParkingSync: async () => [{ id: 'vehicle-uuid', registration_number: '品川500あ1234' }]
     },
     reservations: {
       list: async (filters) => { calls.reservationList = filters; return []; },
@@ -62,7 +64,13 @@ async function makeApp(user) {
         return reservation;
       }
     },
-    auth: { login: async () => null }
+    auth: { login: async () => null },
+    parking: {
+      syncVehicles: async (vehiclesToSync) => {
+        calls.parkingSyncVehicles = vehiclesToSync;
+        return { synced: vehiclesToSync.length };
+      }
+    }
   });
   const token = app.jwt.sign(user, {
     issuer: jwtConfig.issuer,
@@ -176,4 +184,76 @@ test('reservation endpoints scope reception staff to their own site', async (t) 
   });
   assert.equal(dashboard.statusCode, 200);
   assert.equal(calls.dashboardSiteScope, '2');
+});
+
+test('parking sync requires headquarters vehicle read and write permissions', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '1',
+    siteId: '1',
+    siteType: 'headquarters',
+    permissions: ['vehicles:read', 'vehicles:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/parking/vehicles:sync',
+    headers: { authorization: 'Bearer ' + token }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { synced: 1 });
+  assert.deepEqual(calls.parkingSyncVehicles, [
+    { id: 'vehicle-uuid', registration_number: '品川500あ1234' }
+  ]);
+});
+
+test('parking session cookie is short-lived, HTTP-only, and scoped to the embedded app', async (t) => {
+  const { app, token } = await makeApp({
+    sub: '1',
+    siteId: '1',
+    siteType: 'headquarters',
+    permissions: ['vehicles:read']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/parking/session',
+    headers: { authorization: 'Bearer ' + token }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(response.headers['set-cookie'], /Path=\/parking/);
+  assert.match(response.headers['set-cookie'], /HttpOnly/);
+  assert.match(response.headers['set-cookie'], /SameSite=Strict/);
+  assert.match(response.headers['set-cookie'], /Max-Age=/);
+});
+
+test('parking sync denies users missing either vehicle permission', async () => {
+  for (const permissions of [['vehicles:read'], ['vehicles:write']]) {
+    const { app, token } = await makeApp({
+      sub: '1', siteId: '1', siteType: 'headquarters', permissions
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/parking/vehicles:sync',
+      headers: { authorization: 'Bearer ' + token }
+    });
+    assert.equal(response.statusCode, 403);
+    await app.close();
+  }
+});
+
+test('only headquarters users may trigger fleet-wide parking sync', async (t) => {
+  const { app, token } = await makeApp({
+    sub: '2', siteId: '2', siteType: 'direct',
+    permissions: ['vehicles:read', 'vehicles:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/parking/vehicles:sync',
+    headers: { authorization: 'Bearer ' + token }
+  });
+  assert.equal(response.statusCode, 403);
 });
