@@ -13,7 +13,7 @@ try {
   await pool.query(`CREATE TABLE IF NOT EXISTS schema_migrations (
     version VARCHAR(128) NOT NULL PRIMARY KEY,
     applied_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`);
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);
 
   const files = (await readdir(migrationsDir))
     .filter((file) => /^\d+_[a-z0-9_-]+\.sql$/i.test(file))
@@ -24,7 +24,9 @@ try {
       [file]
     );
     if (found.length) continue;
-    const sql = await readFile(join(migrationsDir, file), 'utf8');
+    // MySQL 8.4 and MariaDB both support this collation; 0900_ai_ci is MySQL-only.
+    const sql = (await readFile(join(migrationsDir, file), 'utf8'))
+      .replaceAll('utf8mb4_0900_ai_ci', 'utf8mb4_unicode_ci');
     for (const statement of sql.split(';').map((item) => item.trim()).filter(Boolean)) {
       await pool.query(statement);
     }
