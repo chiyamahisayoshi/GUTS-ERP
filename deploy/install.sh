@@ -27,7 +27,10 @@ if [ -z "${NODE_MAJOR:-}" ] || [ "$NODE_MAJOR" -lt 24 ]; then
   curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
   apt-get install -y nodejs
 fi
+export PATH="$(npm prefix -g)/bin:$PATH"
 command -v pm2 >/dev/null || npm install -g pm2
+PM2="$(command -v pm2)" || die "pm2 安装失败。"
+ln -sf "$PM2" /usr/local/bin/pm2
 
 say "3/7 获取代码"
 if [ ! -d "$APP_DIR/.git" ]; then
@@ -100,6 +103,8 @@ npm run migrate
 say "6/7 创建首个总部管理员"
 if [ -n "$ADMIN_PASS" ]; then
   ADMIN_USERNAME="$ADMIN_USER" ADMIN_DISPLAY_NAME="总部管理员" ADMIN_PASSWORD="$ADMIN_PASS" npm run seed:admin
+  echo "管理员账号: $ADMIN_USER"
+  echo "管理员密码: $ADMIN_PASS   （只显示这一次，请立刻保存！）"
 else
   echo "跳过（已安装过）。"
 fi
