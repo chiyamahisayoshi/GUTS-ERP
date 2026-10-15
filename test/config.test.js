@@ -18,6 +18,17 @@ test('config rejects weak JWT secrets', () => {
   }
 });
 
+test('config rejects an empty ERP error log path', () => {
+  const previous = process.env.ERP_ERROR_LOG_PATH;
+  process.env.ERP_ERROR_LOG_PATH = ' ';
+  try {
+    assert.throws(() => getConfig(), /ERP_ERROR_LOG_PATH must be a non-empty path/);
+  } finally {
+    if (previous === undefined) delete process.env.ERP_ERROR_LOG_PATH;
+    else process.env.ERP_ERROR_LOG_PATH = previous;
+  }
+});
+
 test('parking API permits loopback HTTP only and requires a strong paired key', () => {
   const keys = [
     'JWT_SECRET', 'PUBLIC_BASE_URL', 'DB_USER', 'DB_PASSWORD',

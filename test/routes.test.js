@@ -10,12 +10,13 @@ const jwtConfig = {
   audience: 'guts-parking-test'
 };
 
-async function makeApp(user) {
+async function makeApp(user, syncParking = async (vehicles) => ({ synced: vehicles.length })) {
   const calls = {
     vehicleList: null, createdVehicle: null, reservationList: null,
     createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
     parkingSyncVehicles: null
   };
+  const loggedErrors = [];
   const app = Fastify({ logger: false });
   await app.register(jwt, {
     secret: jwtConfig.secret,
@@ -68,16 +69,16 @@ async function makeApp(user) {
     parking: {
       syncVehicles: async (vehiclesToSync) => {
         calls.parkingSyncVehicles = vehiclesToSync;
-        return { synced: vehiclesToSync.length };
+        return syncParking(vehiclesToSync);
       }
     }
-  });
+  }, { record: (entry) => loggedErrors.push(entry) });
   const token = app.jwt.sign(user, {
     issuer: jwtConfig.issuer,
     audience: jwtConfig.audience,
     expiresIn: 300
   });
-  return { app, token, calls };
+  return { app, token, calls, loggedErrors };
 }
 
 test('store users cannot query vehicles outside their own site', async (t) => {
@@ -256,4 +257,29 @@ test('only headquarters users may trigger fleet-wide parking sync', async (t) =>
     headers: { authorization: 'Bearer ' + token }
   });
   assert.equal(response.statusCode, 403);
+});
+
+test('important parking integration failures are logged without upstream details', async (t) => {
+  const { app, token, loggedErrors } = await makeApp(
+    { sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['vehicles:read', 'vehicles:write'] },
+    async () => {
+      const error = new Error('api_key=secret-key');
+      error.code = 'parking_unavailable';
+      throw error;
+    }
+  );
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/parking/vehicles:sync?token=query-secret',
+    headers: { authorization: 'Bearer ' + token }
+  });
+  assert.equal(response.statusCode, 502);
+  assert.deepEqual(loggedErrors, [{
+    method: 'POST',
+    path: '/api/v1/parking/vehicles:sync',
+    code: 'parking_unavailable'
+  }]);
+  assert.ok(!JSON.stringify(loggedErrors).includes('secret'));
 });

@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 const required = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
@@ -5,6 +7,11 @@ const required = (name) => {
 };
 
 export function getConfig() {
+  const configuredErrorLogPath = process.env.ERP_ERROR_LOG_PATH;
+  if (configuredErrorLogPath !== undefined && !configuredErrorLogPath.trim()) {
+    throw new Error('ERP_ERROR_LOG_PATH must be a non-empty path');
+  }
+
   const jwtSecret = required('JWT_SECRET');
   if (Buffer.byteLength(jwtSecret) < 32) {
     throw new Error('JWT_SECRET must be at least 32 bytes');
@@ -58,6 +65,7 @@ export function getConfig() {
   return {
     host: process.env.HOST || '127.0.0.1',
     port,
+    errorLogPath: resolve(configuredErrorLogPath || '.runtime/erp-errors.log'),
     publicBaseUrl: parsedUrl.origin,
     database: {
       host: process.env.DB_HOST || '127.0.0.1',

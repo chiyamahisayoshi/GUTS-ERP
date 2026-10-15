@@ -33,6 +33,12 @@
 
 服务默认只监听 `127.0.0.1:3000`。数据库密码、JWT 密钥和管理员初始化密码均由环境变量提供，不会写入源代码。
 
+### 错误日志与磁盘限制
+
+ERP 只持久化未处理的服务端 5xx 和明确的停车系统集成异常；参数校验、权限拒绝、登录失败及业务冲突不会写入错误日志。日志为精简 JSON 行，仅包含时间、HTTP 方法、路由路径、固定错误代码和通用说明；不记录请求体、请求头、凭据、JWT、API key 或 query string，也不保存 stack。
+
+默认路径是运行目录下 `.runtime/erp-errors.log`（一份活动日志和一份 `.1` 轮转日志），该目录已加入 `.gitignore`。可用 `ERP_ERROR_LOG_PATH` 指定其他绝对路径；部署到 `/www/wwwroot/guts-erp` 时默认位置为 `/www/wwwroot/guts-erp/.runtime/erp-errors.log`。每个文件最多 1 MiB，轮转时删除更旧日志，因此总占用上限约 2 MiB；目录创建及文件权限尽可能限制为仅服务账号可读写。写入或轮转失败会明确报到 console/PM2 日志，不会静默忽略。达到上限后自动轮转，手动清理时可删除该路径及其 `.1` 文件。
+
 停车场配置、同源 `/parking/` WebSocket 反代、SQLite 数据保护和 ERP → Parking 的手动同步步骤请见 [`docs/PARKING_DEPLOYMENT.md`](docs/PARKING_DEPLOYMENT.md)。Parking 保留独立的 SQLite 数据与账号，初次启用同步前须检查既有车牌/external_id 映射。
 
 ## API

@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { buildApp } from '../src/server.js';
 
 test('server exposes health and rejects invalid bearer tokens as unauthorized', async (t) => {
+  const loggedErrors = [];
   const app = await buildApp({
     logger: false,
+    errorLogger: { record: (entry) => loggedErrors.push(entry) },
     pool: { execute: async () => { throw new Error('unexpected database access'); }, end: async () => {} },
     config: {
       host: '127.0.0.1',
@@ -49,4 +51,57 @@ test('server exposes health and rejects invalid bearer tokens as unauthorized', 
   });
   assert.equal(unauthorized.statusCode, 401);
   assert.deepEqual(unauthorized.json(), { error: 'unauthorized' });
+  assert.deepEqual(loggedErrors, []);
+});
+
+test('login failures stay quiet while unexpected server errors are recorded safely', async (t) => {
+  const loggedErrors = [];
+  const app = await buildApp({
+    logger: false,
+    errorLogger: { record: (entry) => loggedErrors.push(entry) },
+    pool: {
+      execute: async (sql) => {
+        if (sql.includes('COUNT(*)')) throw new Error('password=database-secret Authorization: Bearer token-secret');
+        return [[], []];
+      },
+      end: async () => {}
+    },
+    config: {
+      host: '127.0.0.1',
+      port: 3000,
+      database: {},
+      jwt: {
+        secret: 'test-secret-with-at-least-thirty-two-bytes-long',
+        issuer: 'guts-erp-test',
+        audience: 'guts-parking-test',
+        expiresIn: 300
+      }
+    }
+  });
+  t.after(() => app.close());
+
+  const loginFailure = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login?password=query-secret',
+    payload: { username: 'missing', password: 'request-body-secret' }
+  });
+  assert.equal(loginFailure.statusCode, 401);
+  assert.deepEqual(loggedErrors, []);
+
+  const token = app.jwt.sign(
+    { sub: '1', siteType: 'headquarters', siteId: '1', permissions: [] },
+    { issuer: 'guts-erp-test', audience: 'guts-parking-test', expiresIn: 300 }
+  );
+  const failure = await app.inject({
+    method: 'GET',
+    url: '/api/v1/dashboard/stats?password=query-secret&api_key=query-key',
+    headers: { authorization: `Bearer ${token}` }
+  });
+  assert.equal(failure.statusCode, 500);
+  assert.deepEqual(loggedErrors, [{
+    method: 'GET',
+    path: '/api/v1/dashboard/stats',
+    code: 'internal_error'
+  }]);
+  assert.ok(!JSON.stringify(loggedErrors).includes('secret'));
 });
