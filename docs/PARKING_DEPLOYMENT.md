@@ -42,6 +42,7 @@ SELECT changes();
 1. ERP ルートと `apps/parking` の両方で `npm ci` を実行します。Parking の `node:sqlite` に対応する Node.js 24 を使用してください。
 2. `apps/parking/.env` を作成し、既存データの正確な絶対パスを設定します。既存 Parking の `SESSION_SECRET` と `DATABASE_PATH` を引き継ぎ、`COOKIE_SECURE=1`、`ERROR_LOG_PATH`、`ERP_API_KEY` を設定してください。`ERP_API_KEY` はランダムな 32 バイト以上の秘密値にし、ERP `.env` の `PARKING_API_KEY` と完全一致させます。秘密値はブラウザー、ソース、PM2 ecosystem 設定へ記入しないでください。
 3. ERP `.env` に `PARKING_BACKEND_URL=http://127.0.0.1:8001`、`PARKING_API_URL=http://127.0.0.1:8001/api/v1`、`PARKING_API_KEY=Parking側と同じ秘密値` を設定します。Parking API は同じサーバー内の loopback だけを HTTP で呼び出せます；loopback 以外への接続は HTTPS が必須です。Parking `.env` の `ERP_API_KEY` は ERP の `PARKING_API_KEY` と同じ値にします。API 鍵は ERP サーバーからの同期リクエストだけに使われます。
+
 4. ERP 用 PM2 アプリを更新し、Parking プロセスを追加起動します。
 
 ```sh
@@ -53,6 +54,12 @@ npm ci --omit=dev
 pm2 start ecosystem.config.cjs
 pm2 save
 ```
+
+### ERP エラーログ
+
+ERP は未処理のサーバー 5xx と重要な Parking 連携例外だけを JSON Lines 形式で保存します。通常の 4xx、ログイン失敗、業務上の競合、アクセス履歴は記録しません。ログには時刻・HTTP メソッド・ルート・固定エラーコードと一般的な説明のみを記録し、リクエスト本文/ヘッダー、認証情報、JWT/API key、query string、stack は含めません。
+
+既定の保存先は ERP の作業ディレクトリにある `.runtime/erp-errors.log` で、Git 管理対象外です。別の場所を使う場合は ERP の環境変数 `ERP_ERROR_LOG_PATH` に絶対パスを指定してください。現在のファイルと `.1` の最大 1 MiB の二世代を保持し、合計最大約 2 MiB です。上限到達時には古い世代を自動削除します。書き込み/ローテーションに失敗した場合は ERP の console/PM2 ログにエラーを出します。手動削除ではログ本体と `.1` を削除してください。
 
 `apps/parking/ecosystem.config.cjs` は Parking を `127.0.0.1:8001` だけで待ち受けます。既存 Parking PM2 过程がある場合は、重複起動せず既存プロセスを停止してから設定を置き換えてください。両プロセスは同じアプリ専用サーバー上に置き、ポート 8001 をインターネットへ公開しないでください。
 

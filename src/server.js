@@ -1,4 +1,4 @@
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { getConfig } from './config.js';
@@ -16,10 +16,15 @@ import { createAuthService } from './services/auth-service.js';
 import { createParkingIntegration } from './services/parking-integration.js';
 import { registerParkingProxy } from './parking-proxy.js';
 import { registerRoutes } from './routes.js';
+import { createErrorLogger } from './error-logger.js';
 
-export async function buildApp({ config = getConfig(), pool, logger = true } = {}) {
+export async function buildApp({ config = getConfig(), pool, logger = true, errorLogger } = {}) {
+  const errors = errorLogger || createErrorLogger({
+    filePath: config.errorLogPath || resolve(process.cwd(), '.runtime/erp-errors.log')
+  });
   const app = Fastify({
     logger,
+    logController: new LogController({ disableRequestLogging: true }),
     trustProxy: ['127.0.0.1', '::1'],
     bodyLimit: 64 * 1024
   });
@@ -69,7 +74,7 @@ export async function buildApp({ config = getConfig(), pool, logger = true } = {
     apiUrl: config.parking?.apiUrl,
     apiKey: config.parking?.apiKey
   });
-  registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking });
+  registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking }, errors);
   registerParkingProxy(app, config.parking?.backendUrl || 'http://127.0.0.1:8001');
 
   app.setErrorHandler((error, request, reply) => {
@@ -88,7 +93,14 @@ export async function buildApp({ config = getConfig(), pool, logger = true } = {
     if (error.code === 'ERP_CONFLICT') {
       return reply.code(409).send({ error: 'reservation_conflict', message: error.message });
     }
-    request.log.error({ err: error }, 'Request failed');
+    if (Number.isInteger(error.statusCode) && error.statusCode >= 400 && error.statusCode < 500) {
+      return reply.code(error.statusCode).send({ error: 'invalid_request' });
+    }
+    errors.record({
+      method: request.method,
+      path: request.routeOptions.url || '/unmatched',
+      code: 'internal_error'
+    });
     return reply.code(500).send({ error: 'internal_error' });
   });
 

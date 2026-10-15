@@ -24,7 +24,7 @@ function requirePermissions(permissions, { headquartersOnly = false } = {}) {
   };
 }
 
-export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking }) {
+export function registerRoutes(app, { accounts, admin, vehicles, reservations, auth, parking }, errorLogger) {
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.post('/api/v1/parking/session', {
@@ -65,12 +65,23 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, a
     } catch (error) {
       if (['parking_not_configured', 'parking_unavailable', 'parking_upstream_error',
         'parking_invalid_response', 'parking_legacy_mapping_conflict'].includes(error.code)) {
+        if (error.code !== 'parking_legacy_mapping_conflict') {
+          errorLogger.record({
+            method: request.method,
+            path: request.routeOptions.url,
+            code: error.code
+          });
+        }
         return reply.code(error.code === 'parking_not_configured' ? 503 : 502).send({
           error: error.code,
           message: error.message
         });
       }
-      request.log.error({ err: error }, 'Parking vehicle sync failed');
+      errorLogger.record({
+        method: request.method,
+        path: request.routeOptions.url,
+        code: 'internal_error'
+      });
       return reply.code(500).send({ error: 'internal_error' });
     }
   });
