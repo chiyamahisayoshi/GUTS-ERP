@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS sites (
   updated_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_sites_code (code)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   UNIQUE KEY uq_accounts_username (username),
   KEY ix_accounts_site_id (site_id),
   CONSTRAINT fk_accounts_site FOREIGN KEY (site_id) REFERENCES sites (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS roles (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -34,13 +34,13 @@ CREATE TABLE IF NOT EXISTS roles (
   created_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_roles_key (role_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS permissions (
   permission_key VARCHAR(96) NOT NULL,
   description VARCHAR(255) NOT NULL,
   PRIMARY KEY (permission_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS account_roles (
   account_id BIGINT UNSIGNED NOT NULL,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS account_roles (
   PRIMARY KEY (account_id, role_id),
   CONSTRAINT fk_account_roles_account FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
   CONSTRAINT fk_account_roles_role FOREIGN KEY (role_id) REFERENCES roles (id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS role_permissions (
   role_id BIGINT UNSIGNED NOT NULL,
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS role_permissions (
   PRIMARY KEY (role_id, permission_key),
   CONSTRAINT fk_role_permissions_role FOREIGN KEY (role_id) REFERENCES roles (id) ON DELETE CASCADE,
   CONSTRAINT fk_role_permissions_permission FOREIGN KEY (permission_key) REFERENCES permissions (permission_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS account_permissions (
   account_id BIGINT UNSIGNED NOT NULL,
@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS account_permissions (
   PRIMARY KEY (account_id, permission_key),
   CONSTRAINT fk_account_permissions_account FOREIGN KEY (account_id) REFERENCES accounts (id) ON DELETE CASCADE,
   CONSTRAINT fk_account_permissions_permission FOREIGN KEY (permission_key) REFERENCES permissions (permission_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS vehicles (
   id CHAR(36) NOT NULL,
@@ -82,10 +82,10 @@ CREATE TABLE IF NOT EXISTS vehicles (
   UNIQUE KEY uq_vehicles_vin (vin),
   KEY ix_vehicles_site_id (site_id),
   CONSTRAINT fk_vehicles_site FOREIGN KEY (site_id) REFERENCES sites (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version VARCHAR(128) NOT NULL,
   applied_at TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (version)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

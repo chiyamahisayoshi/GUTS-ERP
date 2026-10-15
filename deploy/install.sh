@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GUTS-ERP one-click installer for Debian 12 (+ Baota MySQL 8.4). Safe to re-run.
+# GUTS-ERP one-click installer for Debian 12 (+ Baota MySQL/MariaDB). Safe to re-run.
 set -euo pipefail
 
 APP_DIR="${APP_DIR:-/www/wwwroot/guts-erp}"
@@ -17,8 +17,8 @@ rand() { head -c 512 /dev/urandom | tr -dc 'A-Za-z0-9' | head -c "$1"; }
 say "1/7 检查 MySQL"
 MYSQL_BIN="$(command -v mysql || true)"
 [ -x /www/server/mysql/bin/mysql ] && MYSQL_BIN=/www/server/mysql/bin/mysql
-[ -n "$MYSQL_BIN" ] || die "没找到 mysql 客户端，请先在宝塔软件商店安装 MySQL 8.4 并启动。"
-(exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null || die "127.0.0.1:3306 没有 MySQL 在监听，请先在宝塔里启动 MySQL。"
+[ -n "$MYSQL_BIN" ] || die "没找到 mysql 客户端，请先在宝塔安装 MySQL 8.0/8.4 或 MariaDB 10.11 并启动。"
+(exec 3<>/dev/tcp/127.0.0.1/3306) 2>/dev/null || die "127.0.0.1:3306 没有数据库在监听，请先在宝塔里启动 MySQL/MariaDB。"
 
 say "2/7 安装 git / Node 24 / PM2"
 if ! command -v git >/dev/null || ! command -v curl >/dev/null; then apt-get update -y && apt-get install -y git curl; fi
@@ -31,19 +31,8 @@ command -v pm2 >/dev/null || npm install -g pm2
 
 say "3/7 获取代码"
 if [ ! -d "$APP_DIR/.git" ]; then
-  if [ -z "${GITHUB_TOKEN:-}" ]; then
-    echo "仓库是私有的，需要 GitHub 只读令牌（GitHub → Settings → Developer settings → Fine-grained tokens，"
-    echo "只选 $REPO 仓库，权限 Contents: Read-only）。"
-    read -rsp "粘贴令牌（输入不显示）: " GITHUB_TOKEN; echo
-  fi
-  [ -n "$GITHUB_TOKEN" ] || die "令牌为空。"
   mkdir -p "$(dirname "$APP_DIR")"
-  git clone --branch "$BRANCH" "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git" "$APP_DIR"
-  git -C "$APP_DIR" remote set-url origin "https://github.com/${REPO}.git"
-  git -C "$APP_DIR" config credential.helper "store --file /root/.guts-erp-git-credentials"
-  umask 077
-  printf 'https://x-access-token:%s@github.com\n' "$GITHUB_TOKEN" > /root/.guts-erp-git-credentials
-  umask 022
+  git clone --branch "$BRANCH" "https://github.com/${REPO}.git" "$APP_DIR"
 else
   git -C "$APP_DIR" pull --ff-only
 fi
@@ -63,7 +52,7 @@ if [ ! -f .env ]; then
   DB_PASS="$(rand 32)"
   ADMIN_PASS="$(rand 20)"
   MYSQL_PWD="$MYSQL_ROOT_PASSWORD" "$MYSQL_BIN" -h127.0.0.1 -uroot <<SQL
-CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
 ALTER USER '${DB_USER}'@'127.0.0.1' IDENTIFIED BY '${DB_PASS}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'127.0.0.1';

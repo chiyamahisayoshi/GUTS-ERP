@@ -1,6 +1,6 @@
 # GUTS-ERP
 
-日本租车公司的 ERP API 第一版，使用 Node.js 24、Fastify 和 MySQL 8.4。所有 MySQL 访问封装在 repository 数据访问层中，便于以后迁移数据库主机。
+日本租车公司的 ERP API 第一版，使用 Node.js 24、Fastify 和 MySQL 协议数据库。支持 MySQL 8.0/8.4 与 MariaDB 10.11 LTS；所有数据库访问封装在 repository 数据访问层中，便于以后迁移数据库主机。
 
 ## 第一版范围
 
@@ -16,7 +16,7 @@
 
 ## 本地开发
 
-需要 Node.js 24 和 MySQL 8.4。
+需要 Node.js 24 和 MySQL 8.0/8.4 或 MariaDB 10.11 LTS。宝塔上如果 MySQL 8.4 安装失败，建议改装 MariaDB 10.11 LTS；应用通过 MySQL 协议连接，配置方式相同。
 
 1. 执行 `npm ci`。
 2. 将 `.env.example` 复制为 `.env`，配置数据库连接、至少 32 字节的随机 `JWT_SECRET` 和 `PUBLIC_BASE_URL`。
@@ -51,13 +51,13 @@
 
 ## 一键部署（推荐）
 
-前提：宝塔里已安装并启动 MySQL 8.4，并在 `[mysqld]` 加了 `bind-address = 127.0.0.1`。用 root 执行（仓库为私有，需要只读 GitHub 令牌，脚本会提示）：
+前提：宝塔里已安装并启动 MySQL 8.0/8.4 或 MariaDB 10.11，并在 `[mysqld]` 加了 `bind-address = 127.0.0.1`。用 root 执行：
 
 ```bash
-curl -fsSL -H "Authorization: token <令牌>" https://raw.githubusercontent.com/chiyamahisayoshi/GUTS-ERP/main/deploy/install.sh -o install.sh && bash install.sh
+curl -fsSL https://raw.githubusercontent.com/chiyamahisayoshi/GUTS-ERP/main/deploy/install.sh -o install.sh && bash install.sh
 ```
 
-脚本会安装 Node 24 与 PM2、拉取代码、自动建库和专用账号、生成 `.env` 与随机密钥、迁移、创建管理员（密码只显示一次）、PM2 开机自启，并安装 `erp` 命令：
+脚本会安装 Node 24 与 PM2、拉取公开仓库、自动建库和专用账号、生成 `.env` 与随机密钥、迁移、创建管理员（密码只显示一次）、PM2 开机自启，并安装 `erp` 命令：
 
 | 命令 | 作用 |
 |------|------|
@@ -69,11 +69,11 @@ curl -fsSL -H "Authorization: token <令牌>" https://raw.githubusercontent.com/
 
 ## Debian 12 + 宝塔手动部署
 
-1. 在宝塔安装 Node.js 24、MySQL 8.4 和 Nginx。MySQL 配置 `bind-address = 127.0.0.1`，然后重启 MySQL，确保数据库不对公网监听。
+1. 在宝塔安装 Node.js 24、MySQL 8.0/8.4（或 MariaDB 10.11 LTS）和 Nginx。如果 MySQL 8.4 安装失败，优先选择 MariaDB 10.11 LTS。数据库配置 `bind-address = 127.0.0.1`，然后重启数据库，确保数据库不对公网监听。
 2. 创建数据库和专用应用账号（密码请换成随机长密码）：
 
    ```sql
-   CREATE DATABASE guts_erp CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+   CREATE DATABASE guts_erp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    CREATE USER 'guts_erp'@'127.0.0.1' IDENTIFIED BY 'USE_A_LONG_RANDOM_PASSWORD';
    GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
      ON guts_erp.* TO 'guts_erp'@'127.0.0.1';
