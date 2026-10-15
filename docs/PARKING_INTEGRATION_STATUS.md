@@ -23,6 +23,10 @@ claim that a production data migration or cutover has been completed.
 - The ERP UI supports vehicle movement between parking areas, persisted map
   coordinates/layout markings, undo for the latest board actions, edge
   auto-scroll, and a Three.js 3D vehicle damage inspector.
+- Vehicle search and registration live in the fleet page. Parking management is
+  a separate page with the lot map, status and job panels, and a searchable
+  vehicle catalog. Lot area width and map height can be adjusted directly by
+  dragging the map corner; the values are saved to the ERP database.
 - The explicit SQLite importer requires tenant/account/site mappings, supports
   preflight and dry-run, creates a source backup before writes, imports in a
   MySQL transaction, checks IDs/row counts, and does not copy legacy passwords
@@ -38,7 +42,7 @@ claim that a production data migration or cutover has been completed.
   caches API responses or authenticated business data; data operations require
   a network connection.
 - Deployment and migration documents include cutover checks, data retention,
-  and rollback cautions. Version is `0.5.0`.
+  and rollback cautions. Version is `0.6.0`.
 
 ## Verified in this workspace
 

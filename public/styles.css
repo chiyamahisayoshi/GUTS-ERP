@@ -29,3 +29,65 @@
 .parking-map{position:relative;width:100%;max-width:100%;min-height:160px;margin:10px auto 0;overflow:hidden;border:1px solid #d6dde7;border-radius:10px;background-color:#f8fafc;background-image:linear-gradient(#e8edf3 1px,transparent 1px),linear-gradient(90deg,#e8edf3 1px,transparent 1px);background-size:24px 24px;touch-action:pan-y}.parking-map.inactive{opacity:.6}.parking-map.drop-target{outline:3px solid #4d91e8;background-color:#edf6ff}.parking-map-markings{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.parking-map-vehicle{position:absolute;z-index:1;max-width:180px;transform:translate(-50%,-50%);border:1px solid #dce3eb;border-radius:8px;background:#fff;box-shadow:0 2px 8px #19355320}.parking-map-vehicle details{padding:0 7px 6px}.parking-map-vehicle details>summary{color:#647186;font-size:10px;cursor:pointer}.parking-map-vehicle .parking-vehicle-controls{min-width:280px;max-width:min(88vw,440px);padding:8px;background:#fff}.parking-drag-handle{display:block;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border:0;border-radius:7px 7px 0 0;background:#e9f2fc;color:#25496f;padding:6px 9px;font-size:11px;font-weight:700;touch-action:none;cursor:grab}.parking-drag-handle:active{cursor:grabbing}.parking-map-empty{position:absolute;inset:0;display:grid;place-items:center;color:#98a4b3;font-size:11px;pointer-events:none}.parking-map-hint{margin:6px 0 0;color:#7c8999;font-size:10px}.parking-map.unassigned{display:flex;flex-wrap:wrap;gap:8px;align-content:start;padding:8px;overflow:visible}.parking-map.unassigned .parking-map-vehicle{position:relative;left:auto!important;top:auto!important;transform:none}.parking-drag-ghost{position:fixed;z-index:1000;transform:translate(-50%,-50%);pointer-events:none;border-radius:7px;background:#275a8c;color:#fff;padding:8px 12px;box-shadow:0 5px 18px #14283d55;font-size:12px}.parking-map-vehicle details[open]{position:relative;z-index:5}
 .parking-inspection-overlay{position:fixed;z-index:1200;inset:0;display:grid;place-items:center;padding:20px;background:#102238aa}.parking-inspection-dialog{display:grid;grid-template-rows:auto auto minmax(300px,1fr);gap:12px;width:min(900px,96vw);height:min(700px,92vh);padding:18px;border-radius:14px;background:#fff;box-shadow:0 20px 70px #10223866}.parking-inspection-dialog>header{display:flex;justify-content:space-between;gap:16px;align-items:start}.parking-inspection-dialog h2{margin:0 0 4px;font-size:17px}.parking-inspection-dialog p{margin:0;color:#738197;font-size:11px;line-height:1.6}.parking-inspection-palette{display:flex;flex-wrap:wrap;gap:7px}.parking-inspection-palette button{border:1px solid #dce3eb;border-radius:20px;background:#fff;padding:7px 11px;color:#35445a;font-size:11px;touch-action:none}.parking-inspection-palette button.selected{outline:2px solid var(--damage-color);background:color-mix(in srgb,var(--damage-color) 12%,white)}.parking-inspection-view{position:relative;min-height:0;overflow:hidden;border:1px solid #dce3eb;border-radius:10px;background:#f2f6f9;touch-action:none}.parking-inspection-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab}.parking-inspection-canvas:active{cursor:grabbing}
 .parking-inspection-drag-ghost{position:fixed;z-index:1300;transform:translate(-50%,-50%);pointer-events:none;border-radius:20px;padding:7px 11px;color:#fff;box-shadow:0 4px 15px #172b4d55;font-size:11px}.parking-map-markings{position:absolute;inset:0;pointer-events:none}.parking-map-markings.editable{pointer-events:all;touch-action:none;cursor:crosshair}.parking-marking-preview{pointer-events:none}.parking-marking-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:8px;color:#6f7d90;font-size:10px}.parking-marking-tools label{display:flex;align-items:center;gap:5px}.parking-marking-tools input[type=color]{width:34px;height:28px;padding:2px;border:1px solid #dce3eb;border-radius:5px;background:#fff}
+.parking-summary{display:grid;grid-template-columns:repeat(3,minmax(110px,150px));gap:12px;margin:0 0 18px}
+.parking-summary-card{min-height:72px;padding:13px 15px;border:1px solid #e3e9ef;border-radius:11px;background:#fff}
+.parking-summary-card span{display:block;margin-bottom:4px;color:#64748b;font-size:11px}
+.parking-summary-card strong{font-size:20px;color:#172b4d}
+.parking-fold{margin:0 0 14px}
+.parking-fold details,.parking-vehicle-catalog{overflow:hidden;border:1px solid #e3e9ef;border-radius:13px;background:#fff;box-shadow:0 2px 7px #172b4d08}
+.parking-fold-summary,.parking-catalog-heading{min-height:58px;padding:10px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;cursor:pointer}
+.parking-fold-summary::-webkit-details-marker,.parking-catalog-heading::-webkit-details-marker{display:none}
+.parking-fold-summary>strong,.parking-catalog-heading>strong{font-size:15px;color:#172b4d}
+.parking-fold-summary>span,.parking-catalog-heading>span{display:flex;align-items:center;gap:12px;color:#64748b;font-size:11px;white-space:nowrap}
+.parking-fold-chevron{display:inline-block;font-size:20px;line-height:1;transition:transform .15s ease}
+.parking-fold details[open] .parking-fold-chevron{transform:rotate(90deg)}
+.parking-fold-content,#parking-status-content{padding:0 15px 14px}
+.parking-status-filters,.parking-class-filters{display:flex;flex-wrap:wrap;gap:6px;padding:12px 0;border-top:1px solid #edf0f4}
+.parking-status-filter,.parking-class-filter{min-height:32px;padding:6px 10px;border:1px solid #e3e9ef;border-radius:7px;background:#fff;color:#526176;font-size:10px}
+.parking-status-filter.active,.parking-class-filter.active{border-color:#99d5d7;background:#e8f8f8;color:#087782}
+.parking-status-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-height:300px;overflow:auto}
+.parking-status-item,.parking-catalog-item{min-width:0;display:grid;gap:4px;text-align:left;border:1px solid #e3e9ef;border-radius:9px;background:#fff;padding:10px 12px}
+.parking-status-item:hover,.parking-catalog-item:hover{border-color:#99d5d7}
+.parking-status-item strong,.parking-catalog-item strong{font-size:12px;color:#172b4d}
+.parking-status-item span,.parking-catalog-item span{font-size:10px;color:#64748b;line-height:1.5;overflow-wrap:anywhere}
+.parking-workspace{display:grid;grid-template-columns:minmax(0,1fr) 300px;align-items:start;gap:16px;margin-top:16px}
+.parking-grid{min-width:0;display:flex;flex-wrap:wrap;align-items:flex-start;gap:14px}
+.parking-grid>.parking-lot{flex:0 0 clamp(180px,calc(var(--parking-lot-width,50%) - 7px),100%);min-width:0;overflow:hidden;padding:0}
+.parking-grid>.parking-unassigned-lot{flex-basis:100%}
+.parking-grid>.parking-lot>header{min-height:48px;padding:7px 10px 7px 14px;border-bottom:1px solid #edf0f4}
+.parking-lot-heading{min-width:0;display:flex;align-items:center;gap:8px}
+.parking-lot-name{margin:0;color:#172b4d;font-size:13px;font-weight:700;text-decoration:none}
+a.parking-lot-name:hover{color:#087e8b;text-decoration:underline;text-underline-offset:3px}
+.parking-lot-count{padding:4px 8px;border-radius:20px;background:#f0f4f7;color:#64748b;font-size:10px;white-space:nowrap}
+.parking-admin-actions{flex-wrap:wrap;justify-content:flex-end}
+.parking-map{min-height:180px;margin:10px auto 11px;background-color:#f8fafb;background-image:linear-gradient(90deg,transparent 49.5%,#e9eff2 50%,transparent 50.5%),linear-gradient(0deg,transparent 49.5%,#e9eff2 50%,transparent 50.5%);background-size:44px 44px}
+.parking-lot-resizing .parking-map{outline:2px dashed #087e8b;outline-offset:2px}
+.parking-resize-handle{position:absolute;z-index:4;right:5px;bottom:5px;width:32px;height:32px;border:1px solid #087e8b;border-radius:7px;background:#fff;color:#087e8b;font:700 20px/1 sans-serif;touch-action:none;cursor:nwse-resize}
+.parking-resize-handle:hover{background:#e8f6f6}
+.parking-resize-handle:focus-visible{outline:2px solid #087e8b;outline-offset:2px}
+.parking-map:before{content:"";position:absolute;z-index:0;inset:9px;border:1px dashed #d8e1e6;border-radius:8px;pointer-events:none}
+.parking-map-vehicle.parking-vehicle-highlight{z-index:8;outline:3px solid #087e8b;outline-offset:3px;animation:parking-focus 1.7s ease-out}
+@keyframes parking-focus{0%,100%{outline-color:transparent}20%,70%{outline-color:#087e8b}}
+.parking-vehicle-catalog{position:sticky;top:90px;max-height:calc(100vh - 110px)}
+.parking-vehicle-catalog details{display:flex;max-height:inherit;flex-direction:column}
+.parking-catalog-heading{flex:none}
+.parking-catalog-heading .parking-fold-chevron{transform:rotate(90deg)}
+.parking-vehicle-catalog details:not([open]) .parking-catalog-heading .parking-fold-chevron{transform:rotate(-90deg)}
+.parking-catalog-content{display:flex;min-height:0;flex:1;flex-direction:column;padding:0 14px 14px}
+.parking-catalog-search{position:relative;display:block;flex:none}
+.parking-catalog-search svg{position:absolute;top:50%;left:11px;width:15px;height:15px;transform:translateY(-50%);stroke:#8794a7}
+.parking-catalog-search input{width:100%;height:38px;padding:0 11px 0 34px;border:1px solid #d9e2e9;border-radius:8px;background:#fff;font-size:12px}
+.parking-class-filters{flex:none}
+.parking-catalog-list{display:grid;gap:7px;min-height:0;overflow:auto;padding-top:9px}
+.parking-catalog-item{padding:10px}
+.parking-catalog-empty{margin:0;padding:15px 2px;color:#64748b;font-size:11px;line-height:1.6}
+.parking-lot-create{margin:0 0 14px}
+.parking-job-form{grid-template-columns:repeat(4,minmax(0,1fr))}
+.parking-job-list{display:grid}
+.parking-catalog-empty .btn{margin-top:9px}
+.parking-empty-state{min-height:190px;display:grid;align-content:center;justify-items:center;gap:10px;padding:24px;text-align:center;border:1px dashed #cbd5df;border-radius:12px;background:#fff;color:#64748b;font-size:12px;line-height:1.6}
+.parking-empty-state strong{color:#172b4d;font-size:15px}
+@media(max-width:1050px){.parking-workspace{grid-template-columns:minmax(0,1fr) 270px}.parking-status-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.parking-workspace{grid-template-columns:1fr}.parking-vehicle-catalog{position:static;max-height:none}.parking-vehicle-catalog details{max-height:none}.parking-catalog-list{max-height:360px}}
+@media(max-width:760px){.parking-summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.parking-summary-card{min-width:0;padding:11px 10px}.parking-summary-card strong{font-size:18px}.parking-grid>.parking-lot{flex-basis:100%}.parking-resize-handle{display:none}.parking-status-list{grid-template-columns:1fr}.parking-job-form{grid-template-columns:1fr 1fr}.parking-fold-summary,.parking-catalog-heading{padding-right:12px;padding-left:12px}.parking-admin-actions{max-width:55%}.parking-admin-actions .btn{padding:5px 6px}.parking-lot-create{align-items:stretch}.parking-lot-create label{min-width:100%}}
+@media(max-width:420px){.parking-job-form{grid-template-columns:1fr}.parking-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.parking-summary-card span{font-size:9px}}
