@@ -1,11 +1,29 @@
 export function createAdminRepository(db) {
   return {
     async createSite({ code, name, type }) {
-      const rows = await db.query(
-        'INSERT INTO sites (code, name, type) VALUES (?, ?, ?)',
-        [code, name, type]
-      );
-      return { id: rows.insertId, code, name, type, status: 'active' };
+      return db.transaction(async (tx) => {
+        const rows = await tx.query(
+          'INSERT INTO sites (code, name, type) VALUES (?, ?, ?)',
+          [code, name, type]
+        );
+        if (type !== 'headquarters') {
+          const defaults = [
+            ['A-1', '#4f86f7'], ['A-2', '#49a078'], ['A-2P', '#d59b32'],
+            ['B', '#a16bd0'], ['B軽トラ', '#e16a5b'], ['C-1', '#3896a8'],
+            ['C-2', '#7588cc'], ['D', '#cc7a38'], ['H-1', '#57a36c'],
+            ['H-2', '#bf5d84'], ['その他', '#9aa5b1']
+          ];
+          for (const [index, [className, color]] of defaults.entries()) {
+            await tx.query(
+              `INSERT INTO parking_vehicle_classes (site_id, name, color, display_order)
+               VALUES (?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+              [rows.insertId, className, color, index]
+            );
+          }
+        }
+        return { id: rows.insertId, code, name, type, status: 'active' };
+      });
     },
 
     async createRole({ roleKey, name, permissions }) {
