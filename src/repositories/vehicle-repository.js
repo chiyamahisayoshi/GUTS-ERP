@@ -5,6 +5,7 @@ export function createVehicleRepository(db, parkingBoard) {
       const params = siteId ? [id, siteId] : [id];
       const rows = await db.query(
         `SELECT id, registration_number, vin, make, model, model_year,
+                inspection_expiry_date, statutory_inspection_date,
                 site_id, status, updated_at
            FROM vehicles WHERE id = ?${siteFilter} LIMIT 1`,
         params
@@ -31,6 +32,7 @@ export function createVehicleRepository(db, parkingBoard) {
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
       return db.query(
         `SELECT id, registration_number, vin, make, model, model_year,
+                inspection_expiry_date, statutory_inspection_date,
                 site_id, status, updated_at
            FROM vehicles ${where}
           ORDER BY id LIMIT ? OFFSET ?`,
@@ -77,11 +79,13 @@ export function createVehicleRepository(db, parkingBoard) {
         }
         await connection.query(
           `INSERT INTO vehicles
-            (id, registration_number, vin, make, model, model_year, site_id, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            (id, registration_number, vin, make, model, model_year,
+             inspection_expiry_date, statutory_inspection_date, site_id, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             vehicle.id, vehicle.registrationNumber, vehicle.vin || null,
             vehicle.make ?? '', vehicle.model ?? '', vehicle.modelYear || null,
+            vehicle.inspectionExpiryDate || null, vehicle.statutoryInspectionDate || null,
             vehicle.siteId, vehicle.status || 'available'
           ]
         );
@@ -153,6 +157,8 @@ export function createVehicleRepository(db, parkingBoard) {
         ['make', 'make'],
         ['model', 'model'],
         ['modelYear', 'model_year'],
+        ['inspectionExpiryDate', 'inspection_expiry_date'],
+        ['statutoryInspectionDate', 'statutory_inspection_date'],
         ['siteId', 'site_id'],
         ['status', 'status']
       ]) {

@@ -17,7 +17,8 @@ type Account = {
 type Employee = { id: string; site_id: string; name: string; status: string };
 type Vehicle = {
   id: string; registration_number: string; vin: string | null; make: string; model: string;
-  model_year: number | null; site_id: string; status: string;
+  model_year: number | null; inspection_expiry_date: string | null;
+  statutory_inspection_date: string | null; site_id: string; status: string;
 };
 type ParkingVehicle = {
   id: number; plate: string; vehicle_type: string; parking_lot_id: number | null;
@@ -677,6 +678,9 @@ function siteOptions(selected = '', includeHeadquarters = false) {
   return cachedSites.filter((site) => includeHeadquarters || site.type !== 'headquarters')
     .map((site) => `<option value="${text(site.id)}" ${String(site.id) === selected ? 'selected' : ''}>${text(site.name)} · ${text(site.code)}</option>`).join('');
 }
+function dateInputValue(value: string | null | undefined) {
+  return value ? value.slice(0, 10) : '';
+}
 function permissionChecks(selected: string[] = []) {
   const permissionNames: Record<string, string> = {
     'sites:read': '店舗情報の閲覧', 'sites:write': '店舗情報の管理',
@@ -705,7 +709,7 @@ async function renderVehicles() {
   const result = await api<{ items: Vehicle[] }>(`/api/v1/vehicles?${params}`);
   currentVehicles = result.items;
   const rows = result.items.map((item) => `<tr>
-    <td class="primary-cell" data-label="車両">${text(item.registration_number)}${item.make || item.model || item.model_year ? `<span class="secondary">${text(item.make)} ${text(item.model)} ${item.model_year ? `・${item.model_year}` : ''}</span>` : ''}</td>
+    <td class="primary-cell" data-label="車両">${text(item.registration_number)}${item.make || item.model || item.model_year ? `<span class="secondary">${text(item.make)} ${text(item.model)} ${item.model_year ? `・${item.model_year}` : ''}</span>` : ''}${item.inspection_expiry_date || item.statutory_inspection_date ? `<span class="secondary vehicle-date-summary">${item.inspection_expiry_date ? `車検 ${text(dateInputValue(item.inspection_expiry_date))}` : ''}${item.inspection_expiry_date && item.statutory_inspection_date ? ' · ' : ''}${item.statutory_inspection_date ? `法定点検 ${text(dateInputValue(item.statutory_inspection_date))}` : ''}</span>` : ''}</td>
     <td data-label="店舗">${text(cachedSites.find((site) => site.id === item.site_id)?.name ??
       (profile!.site.id === item.site_id ? profile!.site.name : item.site_id))}</td>
     <td data-label="状態">${badge(item.status)}</td>
@@ -930,10 +934,16 @@ async function renderParkingBoard() {
       <input name="name" maxlength="40" placeholder="クラス名" required><input name="color" type="color" value="#4f86f7">
       <button class="btn btn-sm" type="submit">追加</button>
     </form>${board.vehicle_classes.map((item) => `<div class="parking-catalog-row"><span><i style="background:${text(item.color)}"></i>${text(item.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-class-delete" data-id="${text(item.id)}">削除</button></div>`).join('')}</div>
-    <div><h2>業務状態</h2><form data-form="parking-status">
+    <div class="parking-status-settings"><h2>業務状態</h2><form class="parking-status-create" data-form="parking-status">
       <input name="name" maxlength="40" placeholder="状態名" required><input name="icon" maxlength="8" placeholder="🔔">
       <button class="btn btn-sm" type="submit">追加</button>
-    </form>${board.statuses.map((item) => `<div class="parking-catalog-row"><span>${text(item.icon)} ${text(item.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-status-delete" data-id="${text(item.id)}">削除</button></div>`).join('')}</div>
+    </form>${board.statuses.map((item) => `<form class="parking-status-edit" data-form="parking-status-edit" data-id="${text(item.id)}">
+      <span class="parking-status-preview">${text(item.icon)}</span>
+      <input name="name" maxlength="40" value="${text(item.name)}" aria-label="状態名" required>
+      <input name="icon" maxlength="8" value="${text(item.icon)}" aria-label="アイコン">
+      <button class="btn btn-sm" type="submit">保存</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-action="parking-status-delete" data-id="${text(item.id)}">削除</button>
+    </form>`).join('') || '<p class="empty">業務状態はありません</p>'}</div>
     <div><h2>車両オプション</h2><form data-form="parking-option">
       <input name="name" maxlength="40" placeholder="オプション名" required><button class="btn btn-sm" type="submit">追加</button>
     </form>${board.vehicle_options.map((item) => `<div class="parking-catalog-row"><span>${text(item.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-option-delete" data-id="${text(item.id)}">削除</button></div>`).join('')}</div>
@@ -1204,6 +1214,16 @@ function clearSiteData() {
   currentVehicles = [];
   currentParkingBoard = null;
 }
+function vehicleDateFields() {
+  return `<section class="vehicle-dates-section" aria-labelledby="vehicle-dates-title">
+    <div class="vehicle-section-heading"><h3 id="vehicle-dates-title">車検・法定点検</h3>
+      <p>日付を登録すると車両情報に保存されます。</p></div>
+    <div class="vehicle-dates-grid">
+      <label class="field"><span class="field-label">車検満了日</span><input type="date" name="inspectionExpiryDate"></label>
+      <label class="field"><span class="field-label">法定点検日</span><input type="date" name="statutoryInspectionDate"></label>
+    </div>
+  </section>`;
+}
 function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = false, error = false) {
   const preview = !catalog;
   const formCatalog = catalog ?? parkingVehicleFormPreview;
@@ -1283,6 +1303,7 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
       </label>`).join('')}
       ${formCatalog.statuses.length ? '' : '<span class="status-empty">対応ステータスはありません。</span>'}
     </div></fieldset>
+    ${vehicleDateFields()}
     <section class="assessment-section">
       <h3>車両状態評価シート</h3>${assessmentGroups ||
         '<p class="assessment-empty">評価項目はありません。駐車場設定で追加できます。</p>'}
@@ -1469,6 +1490,7 @@ async function openModal(which: string, id = '') {
           ${field('registrationNumber', 'ナンバー', 'text', '', '例: 品川 500 あ 1234', true)}
         </div>
         ${siteField}
+        ${canManageParking ? '' : vehicleDateFields()}
         ${canManageParking ? '<div data-vehicle-parking-fields></div>' : ''}
       </div>`, 'vehicle');
       const parkingFields = $('[data-vehicle-parking-fields]');
@@ -1486,6 +1508,8 @@ async function openModal(which: string, id = '') {
         ${field('make', 'メーカー', 'text', vehicle.make)}
         ${field('model', '車種', 'text', vehicle.model)}
         ${field('modelYear', '年式', 'number', String(vehicle.model_year ?? ''))}
+        ${field('inspectionExpiryDate', '車検満了日', 'date', dateInputValue(vehicle.inspection_expiry_date))}
+        ${field('statutoryInspectionDate', '法定点検日', 'date', dateInputValue(vehicle.statutory_inspection_date))}
         ${siteField}
         ${selectField('status', '車両の状態', ['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${vehicle.status === status ? 'selected' : ''}>${label(status)}</option>`).join(''))}
       </div>`, 'edit-vehicle');
@@ -1825,6 +1849,8 @@ async function handleSubmit(event: Event) {
     } else if (kind === 'vehicle') {
       const vehiclePayload: Record<string, unknown> = {
         registrationNumber: value('registrationNumber'),
+        inspectionExpiryDate: value('inspectionExpiryDate') || null,
+        statutoryInspectionDate: value('statutoryInspectionDate') || null,
         siteId: value('siteId')
       };
       if (can('parking:read') && can('parking:write')) {
@@ -1858,6 +1884,8 @@ async function handleSubmit(event: Event) {
       await api(`/api/v1/vehicles/${encodeURIComponent(value('id'))}`, { method: 'PATCH', body: JSON.stringify({
         registrationNumber: value('registrationNumber'), vin: value('vin') || null,
         make: value('make'), model: value('model'), modelYear: value('modelYear') ? Number(value('modelYear')) : null,
+        inspectionExpiryDate: value('inspectionExpiryDate') || null,
+        statutoryInspectionDate: value('statutoryInspectionDate') || null,
         siteId: value('siteId'), status: value('status')
       }) });
     } else if (kind === 'reservation') {
@@ -1949,6 +1977,11 @@ async function handleSubmit(event: Event) {
     } else if (kind === 'parking-status') {
       await api('/api/v1/parking/statuses', {
         method: 'POST', body: JSON.stringify({ name: value('name'), icon: value('icon') || undefined })
+      });
+    } else if (kind === 'parking-status-edit') {
+      await api(`/api/v1/parking/statuses/${encodeURIComponent(form.dataset.id!)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name: value('name'), icon: value('icon') })
       });
     } else if (kind === 'parking-option') {
       await api('/api/v1/parking/options', {
