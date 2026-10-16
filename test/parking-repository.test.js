@@ -369,6 +369,43 @@ test('parking status deletion clears its legacy flag and scopes updates to one s
     sql.startsWith('DELETE FROM parking_vehicle_statuses') && params[1] === '3'));
 });
 
+test('parking status updates preserve scope and reject duplicate names', async () => {
+  const calls = [];
+  const db = {
+    async transaction(callback) {
+      return callback({
+        async query(sql, params) {
+          calls.push({ sql, params });
+          if (sql.includes('SELECT id, name, icon')) return [{ id: '31', name: '洗車待ち', icon: '🫧' }];
+          if (sql.includes('SELECT id FROM parking_vehicle_statuses')) return [];
+          return [];
+        }
+      });
+    }
+  };
+  assert.equal(await createParkingRepository(db).updateStatus({
+    siteId: '3', statusId: '31', name: '整備待ち', icon: '🔧'
+  }), true);
+  assert(calls.some(({ sql, params }) =>
+    sql.startsWith('UPDATE parking_vehicle_statuses') &&
+    params.join('|') === '整備待ち|🔧|31|3'));
+
+  const conflictDb = {
+    async transaction(callback) {
+      return callback({
+        async query(sql) {
+          if (sql.includes('SELECT id, name, icon')) return [{ id: '31', name: '洗車待ち', icon: '🫧' }];
+          if (sql.includes('SELECT id FROM parking_vehicle_statuses')) return [{ id: '32' }];
+          return [];
+        }
+      });
+    }
+  };
+  await assert.rejects(createParkingRepository(conflictDb).updateStatus({
+    siteId: '3', statusId: '31', name: '給油待ち', icon: '🔧'
+  }), { code: 'ER_DUP_ENTRY' });
+});
+
 test('parking option deletion removes saved options and stores built-in suppression transactionally', async () => {
   const calls = [];
   const db = {

@@ -161,6 +161,7 @@ async function makeApp(user) {
       deleteLot: async (input) => { calls.parkingLotDelete = input; return { deleted: true }; },
       orderLots: async (input) => { calls.parkingLotOrder = input; return true; },
       createStatus: async (input) => { calls.parkingCatalogWrites.push(['status', input]); return { id: 31 }; },
+      updateStatus: async (input) => { calls.parkingCatalogWrites.push(['edit-status', input]); return true; },
       deleteStatus: async (input) => { calls.parkingCatalogWrites.push(['delete-status', input]); return true; },
       createVehicleClass: async (input) => { calls.parkingCatalogWrites.push(['class', input]); return { id: 41 }; },
       updateVehicleClass: async (input) => { calls.parkingCatalogWrites.push(['edit-class', input]); return { id: 41 }; },
@@ -458,13 +459,38 @@ test('vehicles created without manufacturer data remain editable', async (t) => 
     headers: { authorization: `Bearer ${token}` },
     payload: {
       registrationNumber: '品川500あ1234', vin: null, make: '', model: '',
-      modelYear: null, siteId: '2', status: 'available'
+      modelYear: null, inspectionExpiryDate: '2027-03-31',
+      statutoryInspectionDate: '2026-10-16', siteId: '2', status: 'available'
     }
   });
   assert.equal(response.statusCode, 200);
   assert.equal(calls.updatedVehicle.id, vehicleId);
   assert.equal(calls.updatedVehicle.fields.make, '');
   assert.equal(calls.updatedVehicle.fields.model, '');
+  assert.equal(calls.updatedVehicle.fields.inspectionExpiryDate, '2027-03-31');
+  assert.equal(calls.updatedVehicle.fields.statutoryInspectionDate, '2026-10-16');
+});
+
+test('vehicle inspection dates reject impossible calendar dates', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: ['vehicles:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST', url: '/api/v1/vehicles',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { registrationNumber: '品川500あ1234', inspectionExpiryDate: '2026-02-30' }
+  });
+  assert.equal(response.statusCode, 422);
+  assert.equal(calls.createdVehicle, null);
+  const outOfRange = await app.inject({
+    method: 'POST', url: '/api/v1/vehicles',
+    headers: { authorization: ['Bearer', token].join(' ') },
+    payload: { registrationNumber: '品川500あ1234', inspectionExpiryDate: '0999-12-31' }
+  });
+  assert.equal(outOfRange.statusCode, 422);
+  assert.equal(calls.createdVehicle, null);
 });
 
 test('headquarters vehicle creation defaults to the administrator home site', async (t) => {
@@ -498,6 +524,8 @@ test('parking class selection creates the ERP vehicle and scopes its parking lin
     payload: {
       registrationNumber: '品川500あ1234',
       siteId: '2',
+      inspectionExpiryDate: '2027-03-31',
+      statutoryInspectionDate: '2026-10-16',
       parkingClass: 'A-1',
       parkingOptions: ['ナビ'],
       parkingNotes: '登録メモ',
@@ -514,6 +542,8 @@ test('parking class selection creates the ERP vehicle and scopes its parking lin
   assert.equal(calls.createdVehicle.siteId, '2');
   assert.equal(calls.createdVehicle.make, '');
   assert.equal(calls.createdVehicle.model, '');
+  assert.equal(calls.createdVehicle.inspectionExpiryDate, '2027-03-31');
+  assert.equal(calls.createdVehicle.statutoryInspectionDate, '2026-10-16');
   assert.equal(calls.createdVehicle.parkingClass, 'A-1');
   assert.equal(calls.createdVehicle.parkingLotId, 3);
   assert.deepEqual(calls.createdVehicle.parkingStatusIds, [4]);
@@ -1061,8 +1091,13 @@ test('parking class catalog writes require parking:admin rather than parking:wri
     method: 'PATCH', url: '/api/v1/parking/classes/41', headers,
     payload: { name: 'A-3', color: '#ff0000' }
   });
+  const statusUpdate = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/statuses/31', headers,
+    payload: { name: '整備待ち', icon: '🔧' }
+  });
   assert.equal(create.statusCode, 403);
   assert.equal(update.statusCode, 403);
+  assert.equal(statusUpdate.statusCode, 403);
   assert.deepEqual(calls.parkingCatalogWrites, []);
 });
 
@@ -1117,6 +1152,10 @@ test('parking status, class, and option catalogs share ERP parking admin permiss
     method: 'POST', url: '/api/v1/parking/statuses', headers,
     payload: { name: '清掃待ち', icon: '🫧' }
   });
+  const statusUpdate = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/statuses/31', headers,
+    payload: { name: '整備待ち', icon: '🔧' }
+  });
   const vehicleClass = await app.inject({
     method: 'POST', url: '/api/v1/parking/classes', headers,
     payload: { name: 'A-2', color: '#4f86f7' }
@@ -1130,11 +1169,13 @@ test('parking status, class, and option catalogs share ERP parking admin permiss
     payload: { name: 'A-3', color: '#ff0000' }
   });
   assert.equal(status.statusCode, 201);
+  assert.equal(statusUpdate.statusCode, 200);
   assert.equal(vehicleClass.statusCode, 201);
   assert.equal(option.statusCode, 201);
   assert.equal(classUpdate.statusCode, 200);
-  assert.deepEqual(calls.parkingCatalogWrites.slice(0, 4), [
+  assert.deepEqual(calls.parkingCatalogWrites.slice(0, 5), [
     ['status', { siteId: '2', name: '清掃待ち', icon: '🫧' }],
+    ['edit-status', { siteId: '2', statusId: '31', name: '整備待ち', icon: '🔧' }],
     ['class', { siteId: '2', name: 'A-2', color: '#4f86f7' }],
     ['option', { siteId: '2', name: 'ETC' }],
     ['edit-class', { siteId: '2', classId: '41', name: 'A-3', color: '#ff0000' }]

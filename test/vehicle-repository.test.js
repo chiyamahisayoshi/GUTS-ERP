@@ -39,6 +39,8 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
     id: vehicleId,
     siteId: '42',
     registrationNumber: '品川500あ1234',
+    inspectionExpiryDate: '2027-03-31',
+    statutoryInspectionDate: '2026-10-16',
     parkingClass: 'A-1',
     parkingOptions: ['ナビ'],
     parkingNotes: '登録メモ',
@@ -57,7 +59,8 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
   assert.equal(vehicle.id, vehicleId);
   assert.ok(erpInsert);
   assert.deepEqual(erpInsert.params, [
-    vehicleId, '品川500あ1234', null, '', '', null, '42', 'available'
+    vehicleId, '品川500あ1234', null, '', '', null,
+    '2027-03-31', '2026-10-16', '42', 'available'
   ]);
   assert.ok(parkingInsert);
   assert.deepEqual(parkingInsert.params.slice(0, 5), [
@@ -73,6 +76,30 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
     assessmentValues: { '31': '5' },
     inspectionMarks: [{ id: 'damage-a', damage_type_id: 41, x: 0.3, y: 0.7 }]
   });
+});
+
+test('vehicle inspection dates are persisted and can be cleared within site scope', async () => {
+  const calls = [];
+  const vehicleId = '11111111-2222-4333-8444-555555555555';
+  const db = {
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      if (sql.startsWith('SELECT id, registration_number')) {
+        return [{
+          id: vehicleId, inspection_expiry_date: null, statutory_inspection_date: '2026-11-11'
+        }];
+      }
+      return { affectedRows: 1 };
+    }
+  };
+  const vehicle = await createVehicleRepository(db).update(vehicleId, {
+    inspectionExpiryDate: null, statutoryInspectionDate: '2026-11-11'
+  }, '42');
+  const update = calls.find(({ sql }) => sql.startsWith('UPDATE vehicles'));
+  assert.deepEqual(update.params, [null, '2026-11-11', vehicleId, '42']);
+  assert.match(update.sql, /inspection_expiry_date = \?, statutory_inspection_date = \?/);
+  assert.equal(vehicle.inspection_expiry_date, null);
+  assert.equal(vehicle.statutory_inspection_date, '2026-11-11');
 });
 
 test('unknown parking class aborts before inserting either vehicle row', async () => {

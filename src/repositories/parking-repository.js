@@ -194,6 +194,35 @@ export function createParkingRepository(db) {
       return { ...rows[0], id: numericId(rows[0].id) };
     },
 
+    async updateStatus({ siteId, statusId, name, icon }) {
+      return db.transaction(async (tx) => {
+        const rows = await tx.query(
+          `SELECT id, name, icon FROM parking_vehicle_statuses
+            WHERE id = ? AND site_id = ? LIMIT 1`,
+          [statusId, siteId]
+        );
+        if (!rows.length) return false;
+        if (name !== rows[0].name) {
+          const conflicts = await tx.query(
+            `SELECT id FROM parking_vehicle_statuses
+              WHERE site_id = ? AND name = ? AND id <> ? LIMIT 1`,
+            [siteId, name, statusId]
+          );
+          if (conflicts.length) {
+            const error = new Error('Parking status name already exists.');
+            error.code = 'ER_DUP_ENTRY';
+            throw error;
+          }
+        }
+        await tx.query(
+          `UPDATE parking_vehicle_statuses SET name = ?, icon = ?
+            WHERE id = ? AND site_id = ?`,
+          [name, icon, statusId, siteId]
+        );
+        return true;
+      });
+    },
+
     async deleteStatus({ siteId, statusId }) {
       return db.transaction(async (tx) => {
         const rows = await tx.query(

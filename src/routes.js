@@ -45,6 +45,14 @@ function normalizeParkingJobTime(value) {
   return `${pad(year, 4)}-${pad(month)}-${pad(day)} ${pad(hour)}:${pad(minute)}`;
 }
 
+function validDateOnly(value) {
+  if (value === null || value === undefined) return true;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  if (Number(value.slice(0, 4)) < 1000) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function isGoogleMapsUrl(value) {
   if (typeof value !== 'string' || value.length > 2000) return false;
   try {
@@ -300,6 +308,38 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     const status = await parkingBoard.createStatus({ siteId: request.user.siteId, name, icon });
     parkingRealtime.publish(request.user.siteId);
     return reply.code(201).send(status);
+  });
+
+  app.patch('/api/v1/parking/statuses/:id', {
+    preHandler: requirePermissions(['parking:read', 'parking:admin']),
+    schema: {
+      params: {
+        type: 'object', required: ['id'],
+        properties: { id: { type: 'string', pattern: '^[1-9][0-9]*$' } }
+      },
+      body: {
+        type: 'object', additionalProperties: false, required: ['name', 'icon'],
+        properties: {
+          name: { type: 'string', minLength: 1, maxLength: 40 },
+          icon: { type: 'string', maxLength: 8 }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const name = request.body.name.trim();
+    const icon = request.body.icon.trim() || '🔔';
+    if (!name) return reply.code(422).send({ error: 'invalid_request' });
+    try {
+      const updated = await parkingBoard.updateStatus({
+        siteId: request.user.siteId, statusId: request.params.id, name, icon
+      });
+      if (!updated) return reply.code(404).send({ error: 'not_found' });
+      parkingRealtime.publish(request.user.siteId);
+      return reply.code(200).send({ id: Number(request.params.id), name, icon });
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return reply.code(409).send({ error: 'resource_conflict' });
+      throw error;
+    }
   });
 
   app.delete('/api/v1/parking/statuses/:id', {
@@ -1257,6 +1297,8 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
           },
           parkingNotes: { type: 'string', maxLength: 5000 },
           parkingLotId: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+          inspectionExpiryDate: { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, { type: 'null' }] },
+          statutoryInspectionDate: { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, { type: 'null' }] },
           parkingStatusIds: {
             type: 'array', maxItems: 100, uniqueItems: true,
             items: { type: 'integer', minimum: 1 }
@@ -1307,6 +1349,10 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
       ? request.body.siteId || request.user.siteId
       : request.user.siteId;
     if (!siteId) return reply.code(400).send({ error: 'site_required' });
+    if (!validDateOnly(request.body.inspectionExpiryDate) ||
+        !validDateOnly(request.body.statutoryInspectionDate)) {
+      return reply.code(422).send({ error: 'invalid_request' });
+    }
     let vehicle;
     try {
       vehicle = await vehicles.create({
@@ -1347,12 +1393,18 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
           make: { type: 'string', maxLength: 80 },
           model: { type: 'string', maxLength: 100 },
           modelYear: { type: ['integer', 'null'], minimum: 1900, maximum: 2200 },
+          inspectionExpiryDate: { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, { type: 'null' }] },
+          statutoryInspectionDate: { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, { type: 'null' }] },
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
           status: { type: 'string', enum: [...vehicleStatuses] }
         }
       }
     }
   }, async (request, reply) => {
+    if (!validDateOnly(request.body.inspectionExpiryDate) ||
+        !validDateOnly(request.body.statutoryInspectionDate)) {
+      return reply.code(422).send({ error: 'invalid_request' });
+    }
     const requestedSiteId = request.user.siteType === 'headquarters'
       ? request.body.siteId
       : request.user.siteId;
