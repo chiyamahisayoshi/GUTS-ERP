@@ -49,16 +49,60 @@ export function createVehicleRepository(db) {
     },
 
     async create(vehicle) {
-      await db.query(
-        `INSERT INTO vehicles
-          (id, registration_number, vin, make, model, model_year, site_id, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          vehicle.id, vehicle.registrationNumber, vehicle.vin || null,
-          vehicle.make, vehicle.model, vehicle.modelYear || null,
-          vehicle.siteId, vehicle.status || 'available'
-        ]
-      );
+      const insertVehicle = async (connection) => {
+        if (vehicle.parkingClass) {
+          const classes = await connection.query(
+            `SELECT name FROM parking_vehicle_classes
+              WHERE site_id = ? AND name = ? LIMIT 1`,
+            [vehicle.siteId, vehicle.parkingClass]
+          );
+          if (!classes.length) {
+            const error = new Error('Unknown parking vehicle class.');
+            error.code = 'PARKING_INVALID_REFERENCE';
+            throw error;
+          }
+          const options = vehicle.parkingOptions ?? [];
+          if (options.length) {
+            const availableOptions = await connection.query(
+              `SELECT name FROM parking_vehicle_option_types
+                WHERE site_id = ? AND name IN (${options.map(() => '?').join(', ')})`,
+              [vehicle.siteId, ...options]
+            );
+            if (availableOptions.length !== new Set(options).size) {
+              const error = new Error('Unknown parking vehicle option.');
+              error.code = 'PARKING_INVALID_REFERENCE';
+              throw error;
+            }
+          }
+        }
+        await connection.query(
+          `INSERT INTO vehicles
+            (id, registration_number, vin, make, model, model_year, site_id, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            vehicle.id, vehicle.registrationNumber, vehicle.vin || null,
+            vehicle.make, vehicle.model, vehicle.modelYear || null,
+            vehicle.siteId, vehicle.status || 'available'
+          ]
+        );
+        if (vehicle.parkingClass) {
+          await connection.query(
+            `INSERT INTO parking_vehicles
+              (site_id, erp_vehicle_id, external_id, plate, vehicle_type, options, notes)
+             VALUES (?, ?, ?, ?, ?, CAST(? AS JSON), ?)`,
+            [
+              vehicle.siteId, vehicle.id, vehicle.id, vehicle.registrationNumber,
+              vehicle.parkingClass, JSON.stringify(vehicle.parkingOptions ?? []),
+              vehicle.parkingNotes ?? ''
+            ]
+          );
+        }
+      };
+      if (vehicle.parkingClass) {
+        await db.transaction((tx) => insertVehicle(tx));
+      } else {
+        await insertVehicle(db);
+      }
       return this.findById(vehicle.id);
     },
 

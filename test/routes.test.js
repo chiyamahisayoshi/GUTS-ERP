@@ -17,7 +17,7 @@ async function makeApp(user) {
     createdAccount: null, employeeList: null, createdEmployee: null, updatedEmployee: null,
     parkingSyncVehicles: null, parkingSyncResult: { created: 1, updated: 0, synced: 1 },
     parkingSyncError: null,
-    parkingBootstrapSiteScope: null, parkingUpdate: null,
+    parkingBootstrapSiteScope: null, parkingVehicleCatalogSiteScope: null, parkingUpdate: null,
     parkingJobCreate: null, parkingJobUpdate: null, parkingJobDelete: null, parkingPublished: [],
     parkingLotCreate: null, parkingLotUpdate: null, parkingLotDelete: null, parkingLotOrder: null,
     parkingCatalogWrites: [], parkingLogisticsWrites: []
@@ -100,6 +100,10 @@ async function makeApp(user) {
       bootstrap: async (siteId) => {
         calls.parkingBootstrapSiteScope = siteId;
         return { parking_lots: [], vehicles: [] };
+      },
+      vehicleCatalog: async (siteId) => {
+        calls.parkingVehicleCatalogSiteScope = siteId;
+        return { vehicle_classes: [{ id: 1, name: 'A-1' }], vehicle_options: [] };
       },
       syncVehiclesFromERP: async ({ vehicles }) => {
         calls.parkingSyncVehicles = vehicles;
@@ -236,6 +240,57 @@ test('store users receive ERP-issued vehicle IDs and cannot assign another site'
   assert.equal(response.statusCode, 201);
   assert.equal(calls.createdVehicle.siteId, '2');
   assert.match(calls.createdVehicle.id, /^[0-9a-f-]{36}$/);
+});
+
+test('parking class selection creates the ERP vehicle and scopes its parking link to the selected site', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '1',
+    siteId: '1',
+    siteType: 'headquarters',
+    permissions: ['vehicles:write', 'parking:read', 'parking:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/vehicles',
+    headers: { authorization: ['Bearer', token].join(' ') },
+    payload: {
+      registrationNumber: '品川500あ1234',
+      make: 'Toyota',
+      model: 'Aqua',
+      siteId: '2',
+      parkingClass: 'A-1'
+    }
+  });
+  assert.equal(response.statusCode, 201);
+  assert.equal(calls.createdVehicle.siteId, '2');
+  assert.equal(calls.createdVehicle.parkingClass, 'A-1');
+  assert.deepEqual(calls.parkingPublished, ['2']);
+});
+
+test('parking-backed vehicle creation requires parking:write', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14',
+    siteId: '2',
+    siteType: 'direct',
+    permissions: ['vehicles:write', 'parking:read']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/vehicles',
+    headers: { authorization: ['Bearer', token].join(' ') },
+    payload: {
+      registrationNumber: '品川500あ1234',
+      make: 'Toyota',
+      model: 'Aqua',
+      parkingClass: 'A-1'
+    }
+  });
+  assert.equal(response.statusCode, 403);
+  assert.equal(calls.createdVehicle, null);
 });
 
 test('store users cannot manage accounts even if a token has the permission claim', async (t) => {
@@ -438,6 +493,30 @@ test('parking bootstrap rejects accounts without parking:read', async (t) => {
   });
   assert.equal(response.statusCode, 403);
   assert.equal(calls.parkingBootstrapSiteScope, null);
+});
+
+test('parking vehicle catalog uses selected ERP site only for headquarters accounts', async (t) => {
+  const headquarters = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['parking:read']
+  });
+  t.after(() => headquarters.app.close());
+  const headquartersResponse = await headquarters.app.inject({
+    method: 'GET', url: '/api/v1/parking/vehicle-catalog?siteId=2',
+    headers: { authorization: ['Bearer', headquarters.token].join(' ') }
+  });
+  assert.equal(headquartersResponse.statusCode, 200);
+  assert.equal(headquarters.calls.parkingVehicleCatalogSiteScope, '2');
+
+  const store = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: ['parking:read']
+  });
+  t.after(() => store.app.close());
+  const storeResponse = await store.app.inject({
+    method: 'GET', url: '/api/v1/parking/vehicle-catalog?siteId=99',
+    headers: { authorization: ['Bearer', store.token].join(' ') }
+  });
+  assert.equal(storeResponse.statusCode, 200);
+  assert.equal(store.calls.parkingVehicleCatalogSiteScope, '2');
 });
 
 test('legacy parking login handoff is no longer exposed', async (t) => {
@@ -684,6 +763,26 @@ test('parking area admin routes require parking:admin and validate safe map URLs
   });
   assert.equal(invalidUrl.statusCode, 422);
   assert.equal(admin.calls.parkingLotCreate, null);
+});
+
+test('parking class catalog writes require parking:admin rather than parking:write', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct',
+    permissions: ['parking:read', 'parking:write']
+  });
+  t.after(() => app.close());
+  const headers = { authorization: 'Bearer ' + token };
+  const create = await app.inject({
+    method: 'POST', url: '/api/v1/parking/classes', headers,
+    payload: { name: 'A-2', color: '#4f86f7' }
+  });
+  const update = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/classes/41', headers,
+    payload: { name: 'A-3', color: '#ff0000' }
+  });
+  assert.equal(create.statusCode, 403);
+  assert.equal(update.statusCode, 403);
+  assert.deepEqual(calls.parkingCatalogWrites, []);
 });
 
 test('parking status, class, and option catalogs share ERP parking admin permission', async (t) => {

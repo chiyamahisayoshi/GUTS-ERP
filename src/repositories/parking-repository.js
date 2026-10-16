@@ -811,6 +811,26 @@ export function createParkingRepository(db) {
       });
     },
 
+    async vehicleCatalog(siteId) {
+      const [classes, options] = await Promise.all([
+        db.query(
+          `SELECT id, name, color, display_order
+             FROM parking_vehicle_classes WHERE site_id = ? ORDER BY display_order, id`,
+          [siteId]
+        ),
+        db.query(
+          `SELECT id, name FROM parking_vehicle_option_types WHERE site_id = ? ORDER BY id`,
+          [siteId]
+        )
+      ]);
+      return {
+        vehicle_classes: classes.map((item) => ({
+          ...item, id: numericId(item.id), display_order: Number(item.display_order)
+        })),
+        vehicle_options: options.map((item) => ({ ...item, id: numericId(item.id) }))
+      };
+    },
+
     async bootstrap(siteId) {
       const [
         parkingLots,

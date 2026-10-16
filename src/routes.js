@@ -113,6 +113,28 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     preHandler: requirePermission('parking:read')
   }, async (request) => parkingBoard.bootstrap(request.user.siteId));
 
+  app.get('/api/v1/parking/vehicle-catalog', {
+    preHandler: requirePermission('parking:read'),
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { siteId: { type: 'string', pattern: '^[1-9]\\d*$' } }
+      }
+    }
+  }, async (request, reply) => {
+    let siteId = request.user.siteId;
+    if (request.user.siteType === 'headquarters') {
+      siteId = request.query.siteId;
+      if (!siteId) return reply.code(400).send({ error: 'site_required' });
+      const [site] = await admin.listSites(siteId);
+      if (!site || site.type === 'headquarters' || site.status !== 'active') {
+        return reply.code(404).send({ error: 'invalid_site' });
+      }
+    }
+    return parkingBoard.vehicleCatalog(siteId);
+  });
+
   app.post('/api/v1/parking/lots', {
     preHandler: requirePermissions(['parking:read', 'parking:admin']),
     schema: {
@@ -1143,20 +1165,43 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
           model: { type: 'string', minLength: 1, maxLength: 100 },
           modelYear: { type: 'integer', minimum: 1900, maximum: 2200 },
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
-          status: { type: 'string', enum: [...vehicleStatuses] }
+          status: { type: 'string', enum: [...vehicleStatuses] },
+          parkingClass: { type: 'string', minLength: 1, maxLength: 120 },
+          parkingOptions: {
+            type: 'array', maxItems: 100, uniqueItems: true,
+            items: { type: 'string', minLength: 1, maxLength: 120 }
+          },
+          parkingNotes: { type: 'string', maxLength: 2000 }
         }
       }
     }
   }, async (request, reply) => {
+    const hasParkingFields = ['parkingClass', 'parkingOptions', 'parkingNotes']
+      .some((key) => Object.hasOwn(request.body, key));
+    if (hasParkingFields && !request.user.permissions?.includes('parking:write')) {
+      return reply.code(403).send({ error: 'forbidden' });
+    }
+    if (hasParkingFields && !request.body.parkingClass) {
+      return reply.code(422).send({ error: 'invalid_reference' });
+    }
     const siteId = request.user.siteType === 'headquarters'
       ? request.body.siteId
       : request.user.siteId;
     if (!siteId) return reply.code(400).send({ error: 'site_required' });
-    const vehicle = await vehicles.create({
-      ...request.body,
-      siteId,
-      id: randomUUID()
-    });
+    let vehicle;
+    try {
+      vehicle = await vehicles.create({
+        ...request.body,
+        siteId,
+        id: randomUUID()
+      });
+    } catch (error) {
+      if (error.code === 'PARKING_INVALID_REFERENCE') {
+        return reply.code(422).send({ error: 'invalid_reference' });
+      }
+      throw error;
+    }
+    if (hasParkingFields) parkingRealtime.publish(siteId);
     return reply.code(201).send(vehicle);
   });
 
