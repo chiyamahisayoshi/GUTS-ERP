@@ -147,6 +147,7 @@ a.parking-lot-name:hover{color:#087e8b;text-decoration:underline;text-underline-
 .damage-type-button.selected{outline:2px solid var(--damage-color,#087e8b);outline-offset:1px}
 .inspection-hint{margin:0 0 10px;color:#52616a;font-size:13px;line-height:1.6}
 .inspection-car-view{position:relative;width:min(100%,620px);height:auto;aspect-ratio:600/340;margin:0 auto;overflow:hidden;border:1px solid #dce3e8;border-radius:12px;background:radial-gradient(ellipse at 50% 55%,#fff 0,#f1f5f8 72%);touch-action:none}
+.inspection-preview-note{position:absolute;inset:0;display:grid;place-items:center;margin:0;padding:16px;color:#52616a;text-align:center;font-size:14px;line-height:1.5}
 .inspection-car-view .parking-inspection-canvas{width:100%;height:100%}
 .inspection-mark-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
 .inspection-mark-empty{color:#64727a;font-size:13px}
