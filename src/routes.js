@@ -1171,12 +1171,47 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
             type: 'array', maxItems: 100, uniqueItems: true,
             items: { type: 'string', minLength: 1, maxLength: 120 }
           },
-          parkingNotes: { type: 'string', maxLength: 2000 }
+          parkingNotes: { type: 'string', maxLength: 5000 },
+          parkingLotId: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+          parkingStatusIds: {
+            type: 'array', maxItems: 100, uniqueItems: true,
+            items: { type: 'integer', minimum: 1 }
+          },
+          parkingUnwashed: { type: 'boolean' },
+          parkingNoFuel: { type: 'boolean' },
+          parkingNeedsRepair: { type: 'boolean' },
+          parkingAssessmentValues: {
+            type: 'object', maxProperties: 100, propertyNames: { pattern: '^[1-9][0-9]*$' },
+            additionalProperties: { anyOf: [{ type: 'string' }, { type: 'number' }, { type: 'boolean' }] }
+          },
+          parkingInspectionMarks: {
+            type: 'array', maxItems: 200,
+            items: {
+              type: 'object', additionalProperties: false,
+              required: ['id', 'damage_type_id', 'x', 'y'],
+              properties: {
+                id: { type: 'string', pattern: '^[\\w-]{1,64}$' },
+                damage_type_id: { type: 'integer', minimum: 1 },
+                x: { type: 'number', minimum: 0, maximum: 1 },
+                y: { type: 'number', minimum: 0, maximum: 1 },
+                world_x: { type: 'number', minimum: -3, maximum: 3 },
+                world_y: { type: 'number', minimum: -3, maximum: 3 },
+                world_z: { type: 'number', minimum: -3, maximum: 3 },
+                world_nx: { type: 'number', minimum: -1, maximum: 1 },
+                world_ny: { type: 'number', minimum: -1, maximum: 1 },
+                world_nz: { type: 'number', minimum: -1, maximum: 1 }
+              }
+            }
+          }
         }
       }
     }
   }, async (request, reply) => {
-    const hasParkingFields = ['parkingClass', 'parkingOptions', 'parkingNotes']
+    const hasParkingFields = [
+      'parkingClass', 'parkingOptions', 'parkingNotes', 'parkingLotId',
+      'parkingStatusIds', 'parkingUnwashed', 'parkingNoFuel', 'parkingNeedsRepair',
+      'parkingAssessmentValues', 'parkingInspectionMarks'
+    ]
       .some((key) => Object.hasOwn(request.body, key));
     if (hasParkingFields && !request.user.permissions?.includes('parking:write')) {
       return reply.code(403).send({ error: 'forbidden' });
@@ -1198,6 +1233,9 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     } catch (error) {
       if (error.code === 'PARKING_INVALID_REFERENCE') {
         return reply.code(422).send({ error: 'invalid_reference' });
+      }
+      if (error.code === 'PARKING_INVALID_VALUE') {
+        return reply.code(422).send({ error: 'invalid_request' });
       }
       throw error;
     }

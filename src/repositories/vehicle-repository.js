@@ -1,4 +1,4 @@
-export function createVehicleRepository(db) {
+export function createVehicleRepository(db, parkingBoard) {
   return {
     async findById(id, siteId) {
       const siteFilter = siteId ? ' AND site_id = ?' : '';
@@ -86,7 +86,7 @@ export function createVehicleRepository(db) {
           ]
         );
         if (vehicle.parkingClass) {
-          await connection.query(
+          const parkingInsert = await connection.query(
             `INSERT INTO parking_vehicles
               (site_id, erp_vehicle_id, external_id, plate, vehicle_type, options, notes)
              VALUES (?, ?, ?, ?, ?, CAST(? AS JSON), ?)`,
@@ -96,6 +96,44 @@ export function createVehicleRepository(db) {
               vehicle.parkingNotes ?? ''
             ]
           );
+          const parkingDetails = [
+            'parkingLotId', 'parkingStatusIds', 'parkingUnwashed', 'parkingNoFuel',
+            'parkingNeedsRepair', 'parkingAssessmentValues', 'parkingInspectionMarks'
+          ];
+          if (parkingDetails.some((key) => Object.hasOwn(vehicle, key))) {
+            if (!parkingBoard?.updateVehicle || !parkingBoard?.nextVehiclePosition || !parkingInsert.insertId) {
+              const error = new Error('Parking vehicle details could not be saved.');
+              error.code = 'PARKING_INVALID_REFERENCE';
+              throw error;
+            }
+            const position = await parkingBoard.nextVehiclePosition({
+              siteId: vehicle.siteId,
+              parkingLotId: vehicle.parkingLotId
+            }, connection);
+            const parkingFields = {
+              siteId: vehicle.siteId,
+              vehicleId: String(parkingInsert.insertId),
+              positionX: position.positionX,
+              positionY: position.positionY
+            };
+            for (const [source, target] of [
+              ['parkingLotId', 'parkingLotId'],
+              ['parkingStatusIds', 'statusIds'],
+              ['parkingUnwashed', 'unwashed'],
+              ['parkingNoFuel', 'noFuel'],
+              ['parkingNeedsRepair', 'needsRepair'],
+              ['parkingAssessmentValues', 'assessmentValues'],
+              ['parkingInspectionMarks', 'inspectionMarks']
+            ]) {
+              if (Object.hasOwn(vehicle, source)) parkingFields[target] = vehicle[source];
+            }
+            const parkingVehicle = await parkingBoard.updateVehicle(parkingFields, connection);
+            if (!parkingVehicle) {
+              const error = new Error('Parking vehicle details could not be saved.');
+              error.code = 'PARKING_INVALID_REFERENCE';
+              throw error;
+            }
+          }
         }
       };
       if (vehicle.parkingClass) {

@@ -27,8 +27,45 @@ function parkingLotFromRow(row) {
   };
 }
 
+const parkingPositionGrid = Array.from({ length: 32 }, (_, index) => [
+  [0.125, 0.375, 0.625, 0.875][index % 4],
+  [0.0625, 0.1875, 0.3125, 0.4375, 0.5625, 0.6875, 0.8125, 0.9375][Math.floor(index / 4)]
+]);
+
 export function createParkingRepository(db) {
   return {
+    async nextVehiclePosition({ siteId, parkingLotId }, transaction) {
+      if (parkingLotId === undefined || parkingLotId === null) {
+        return { positionX: 0.5, positionY: 0.5 };
+      }
+      const tx = transaction ?? db;
+      const lots = await tx.query(
+        'SELECT id FROM parking_lots WHERE id = ? AND site_id = ? LIMIT 1 FOR UPDATE',
+        [parkingLotId, siteId]
+      );
+      if (!lots[0]) {
+        const error = new Error('Unknown parking location.');
+        error.code = 'PARKING_INVALID_REFERENCE';
+        throw error;
+      }
+      const rows = await tx.query(
+        `SELECT position_x, position_y FROM parking_vehicles
+          WHERE site_id = ? AND parking_lot_id = ? FOR UPDATE`,
+        [siteId, parkingLotId]
+      );
+      const counts = new Map();
+      for (const row of rows) {
+        const key = `${Number(row.position_x).toFixed(2)},${Number(row.position_y).toFixed(2)}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+      const [positionX, positionY] = parkingPositionGrid.reduce((best, point) => {
+        const key = `${point[0].toFixed(2)},${point[1].toFixed(2)}`;
+        const bestKey = `${best[0].toFixed(2)},${best[1].toFixed(2)}`;
+        return (counts.get(key) ?? 0) < (counts.get(bestKey) ?? 0) ? point : best;
+      }, parkingPositionGrid[0]);
+      return { positionX, positionY };
+    },
+
     async createLot({ siteId, name, navigationUrl = '' }) {
       const orderRows = await db.query(
         'SELECT COALESCE(MAX(display_order), -1) + 1 AS next_order FROM parking_lots WHERE site_id = ?',
@@ -589,8 +626,8 @@ export function createParkingRepository(db) {
     async updateVehicle({
       siteId, vehicleId, parkingLotId, positionX, positionY, statusIds,
       unwashed, noFuel, needsRepair, options, notes, assessmentValues, inspectionMarks
-    }) {
-      return db.transaction(async (tx) => {
+    }, transaction) {
+      const update = async (tx) => {
         const vehicles = await tx.query(
           `SELECT id FROM parking_vehicles WHERE id = ? AND site_id = ? LIMIT 1`,
           [vehicleId, siteId]
@@ -808,11 +845,12 @@ export function createParkingRepository(db) {
           options: parseJson(row.options, []),
           status_ids: statuses.map((status) => numericId(status.status_id))
         };
-      });
+      };
+      return transaction ? update(transaction) : db.transaction(update);
     },
 
     async vehicleCatalog(siteId) {
-      const [classes, options] = await Promise.all([
+      const [classes, options, lots, statuses, assessmentFields, damageTypes] = await Promise.all([
         db.query(
           `SELECT id, name, color, display_order
              FROM parking_vehicle_classes WHERE site_id = ? ORDER BY display_order, id`,
@@ -821,13 +859,42 @@ export function createParkingRepository(db) {
         db.query(
           `SELECT id, name FROM parking_vehicle_option_types WHERE site_id = ? ORDER BY id`,
           [siteId]
+        ),
+        db.query(
+          `SELECT id, name, display_order, area_height, area_width, navigation_url,
+                  markings, capacity, is_active, class_priority
+             FROM parking_lots WHERE site_id = ? ORDER BY display_order, id`,
+          [siteId]
+        ),
+        db.query(
+          `SELECT id, name, icon, \`key\` FROM parking_vehicle_statuses
+            WHERE site_id = ? ORDER BY id`,
+          [siteId]
+        ),
+        db.query(
+          `SELECT id, built_in_key, group_key, name, field_type, suffix, display_order
+             FROM parking_assessment_fields WHERE site_id = ?
+            ORDER BY CASE group_key WHEN 'body' THEN 0 WHEN 'electrical' THEN 1
+                     WHEN 'basic' THEN 2 ELSE 3 END, display_order, id`,
+          [siteId]
+        ),
+        db.query(
+          `SELECT id, built_in_key, name, icon, color
+             FROM parking_damage_types WHERE site_id = ? ORDER BY id`,
+          [siteId]
         )
       ]);
       return {
         vehicle_classes: classes.map((item) => ({
           ...item, id: numericId(item.id), display_order: Number(item.display_order)
         })),
-        vehicle_options: options.map((item) => ({ ...item, id: numericId(item.id) }))
+        vehicle_options: options.map((item) => ({ ...item, id: numericId(item.id) })),
+        parking_lots: lots.map(parkingLotFromRow),
+        statuses: statuses.map((item) => ({ ...item, id: numericId(item.id) })),
+        assessment_fields: assessmentFields.map((item) => ({
+          ...item, id: numericId(item.id), display_order: Number(item.display_order)
+        })),
+        damage_types: damageTypes.map((item) => ({ ...item, id: numericId(item.id) }))
       };
     },
 

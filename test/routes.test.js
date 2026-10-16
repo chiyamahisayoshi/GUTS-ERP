@@ -260,12 +260,27 @@ test('parking class selection creates the ERP vehicle and scopes its parking lin
       make: 'Toyota',
       model: 'Aqua',
       siteId: '2',
-      parkingClass: 'A-1'
+      parkingClass: 'A-1',
+      parkingOptions: ['ナビ'],
+      parkingNotes: '登録メモ',
+      parkingLotId: 3,
+      parkingStatusIds: [4],
+      parkingUnwashed: true,
+      parkingNoFuel: false,
+      parkingNeedsRepair: false,
+      parkingAssessmentValues: { '31': '5' },
+      parkingInspectionMarks: [{ id: 'damage-a', damage_type_id: 41, x: 0.3, y: 0.7 }]
     }
   });
   assert.equal(response.statusCode, 201);
   assert.equal(calls.createdVehicle.siteId, '2');
   assert.equal(calls.createdVehicle.parkingClass, 'A-1');
+  assert.equal(calls.createdVehicle.parkingLotId, 3);
+  assert.deepEqual(calls.createdVehicle.parkingStatusIds, [4]);
+  assert.deepEqual(calls.createdVehicle.parkingAssessmentValues, { '31': '5' });
+  assert.deepEqual(calls.createdVehicle.parkingInspectionMarks, [
+    { id: 'damage-a', damage_type_id: 41, x: 0.3, y: 0.7 }
+  ]);
   assert.deepEqual(calls.parkingPublished, ['2']);
 });
 
