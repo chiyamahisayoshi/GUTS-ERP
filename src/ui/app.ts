@@ -68,6 +68,34 @@ type ParkingVehicleCatalog = Pick<
   ParkingBootstrap,
   'parking_lots' | 'statuses' | 'vehicle_options' | 'vehicle_classes' | 'assessment_fields' | 'damage_types'
 >;
+const parkingVehicleFormPreview: ParkingVehicleCatalog = {
+  parking_lots: [],
+  vehicle_classes: [],
+  vehicle_options: ['ETC', '車載器', '禁煙', '喫煙', 'ナビ', 'スタッドレス']
+    .map((name, index) => ({ id: -index - 1, name })),
+  statuses: [
+    { id: -1, name: '洗車待ち', icon: '🫧', key: 'unwashed' },
+    { id: -2, name: '給油待ち', icon: '⛽', key: 'no_fuel' },
+    { id: -3, name: '要修理', icon: '🔧', key: 'needs_repair' }
+  ],
+  assessment_fields: [
+    { id: -1, built_in_key: 'exterior', group_key: 'body', name: '外装（ボディ・塗装・鈑金）', field_type: 'rating', suffix: '' },
+    { id: -2, built_in_key: 'interior', group_key: 'body', name: '内装（シート・天井・フロア）', field_type: 'rating', suffix: '' },
+    { id: -3, built_in_key: 'wheels', group_key: 'body', name: 'ホイール', field_type: 'rating', suffix: '' },
+    { id: -4, built_in_key: 'registration_document', group_key: 'electrical', name: '車検証', field_type: 'checkbox', suffix: '確認済み' },
+    { id: -5, built_in_key: 'radio', group_key: 'electrical', name: 'ラジオ', field_type: 'checkbox', suffix: '' },
+    { id: -6, built_in_key: 'navigation', group_key: 'electrical', name: 'ナビ（５年以内）', field_type: 'checkbox', suffix: '' },
+    { id: -7, built_in_key: 'air_conditioning', group_key: 'electrical', name: 'エアコン', field_type: 'checkbox', suffix: '' },
+    { id: -8, built_in_key: 'side_mirror', group_key: 'electrical', name: 'サイドミラー調整', field_type: 'checkbox', suffix: '' },
+    { id: -9, built_in_key: 'mileage', group_key: 'basic', name: '走行距離', field_type: 'number', suffix: 'km' },
+    { id: -10, built_in_key: 'registration_year', group_key: 'basic', name: '初年度登録（年）', field_type: 'number', suffix: '年' },
+    { id: -11, built_in_key: 'registration_month', group_key: 'basic', name: '初年度登録（月）', field_type: 'number', suffix: '月' }
+  ],
+  damage_types: [
+    { id: -1, built_in_key: 'scratch', name: '傷', icon: '〰️', color: '#e34b4b' },
+    { id: -2, built_in_key: 'dent', name: '凹み', icon: '◉', color: '#805ad5' }
+  ]
+};
 type Permission = { permission_key: string; description: string };
 type Reservation = {
   id: string; reservation_code: string; site_id: string; site_code: string; site_name: string;
@@ -1071,9 +1099,9 @@ function vehicleErpBasicSection() {
     </section>
   </section>`;
 }
-function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = false) {
-  if (loading) return '<p class="vehicle-catalog-message" role="status">駐車場設定を読み込んでいます…</p>';
-  if (!catalog) return '<p class="vehicle-catalog-message">店舗を選択すると駐車場設定を読み込みます。</p>';
+function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = false, error = false) {
+  const preview = !catalog;
+  const formCatalog = catalog ?? parkingVehicleFormPreview;
   const groups: Record<string, string> = {
     body: '外装・内装系', electrical: '車検証・電装系',
     basic: '基本情報', custom: '追加項目'
@@ -1081,15 +1109,15 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
   const assessmentControl = (item: ParkingAssessmentField, labelId: string) => {
     const id = text(item.id);
     if (item.field_type === 'rating') {
-      return `<input type="hidden" data-assessment-id="${id}">
+      return `<input type="hidden" data-assessment-id="${id}" ${preview ? 'disabled' : ''}>
         <div class="rating-control" role="group" aria-label="${text(item.name)}の評価">${[1, 2, 3, 4, 5].map((score) =>
           `<button type="button" data-action="vehicle-rating" data-rating-assessment-id="${id}"
-            data-score="${score}" aria-label="${score}点" aria-pressed="false">${score}</button>`
+              data-score="${score}" aria-label="${score}点" aria-pressed="false" ${preview ? 'disabled' : ''}>${score}</button>`
         ).join('')}</div>`;
     }
     if (item.field_type === 'checkbox') {
       return `${item.suffix ? `<span class="assessment-field-suffix">${text(item.suffix)}</span>` : ''}
-        <input type="checkbox" data-assessment-id="${id}" aria-labelledby="${labelId}">`;
+          <input type="checkbox" data-assessment-id="${id}" aria-labelledby="${labelId}" ${preview ? 'disabled' : ''}>`;
     }
     const isMonth = item.built_in_key === 'registration_month';
     const isYear = item.built_in_key === 'registration_year';
@@ -1098,10 +1126,10 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
       ${item.field_type === 'number'
         ? `min="${isMonth ? 1 : 0}" ${isMonth ? 'max="12"' : isYear ? `max="${new Date().getFullYear()}"` : 'max="999999999999"'} step="1" inputmode="numeric" maxlength="12" ${isMonth ? 'placeholder="1〜12"' : ''}`
         : 'maxlength="500"'}
-      aria-labelledby="${labelId}">${item.suffix ? `<span class="assessment-field-suffix">${text(item.suffix)}</span>` : ''}`;
+      aria-labelledby="${labelId}" ${preview ? 'disabled' : ''}>${item.suffix ? `<span class="assessment-field-suffix">${text(item.suffix)}</span>` : ''}`;
   };
   const assessmentGroups = Object.entries(groups).map(([groupKey, groupLabel]) => {
-    const fields = catalog.assessment_fields.filter((item) => (item.group_key ?? 'custom') === groupKey);
+    const fields = formCatalog.assessment_fields.filter((item) => (item.group_key ?? 'custom') === groupKey);
     const erpFields = groupKey === 'basic' ? vehicleErpBasicFields() : '';
     if (!fields.length && !erpFields) return '';
     return `<section class="assessment-group"><h4>${groupLabel}</h4><div class="assessment-field-grid">
@@ -1114,63 +1142,80 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
       }).join('')}${erpFields}
     </div></section>`;
   }).join('');
-  const defaultLot = catalog.parking_lots.find((lot) => lot.is_active);
-  const defaultLocation = defaultLot
+  const defaultLot = formCatalog.parking_lots.find((lot) => lot.is_active);
+  const defaultLocation = preview
+    ? `<input type="hidden" name="parkingLotId" value="" disabled>
+       <p class="default-location-note">店舗を選択すると、登録先の駐車エリアが表示されます。</p>`
+    : defaultLot
     ? `<input type="hidden" name="parkingLotId" value="${text(defaultLot.id)}">
        <p class="default-location-note"><span>追加した車両は</span>「<strong>${text(defaultLot.name)}</strong>」<span>に登録されます。</span></p>`
     : `<input type="hidden" name="parkingLotId" value=""><p class="default-location-note">有効な駐車エリアがないため、車両は未配置で登録されます。</p>`;
+  const catalogNotice = preview
+    ? `<p class="vehicle-catalog-message" role="${loading || error ? 'status' : 'note'}">${
+      error
+        ? '駐車場設定を読み込めませんでした。店舗を確認して再試行してください。'
+        : loading
+          ? '駐車場設定を読み込んでいます…'
+          : '店舗を選択すると、その店舗の設定を読み込みます。項目の内容はParkingの標準構成です。'
+    }${error ? ' <button class="btn btn-sm" type="button" data-action="vehicle-catalog-retry">再試行</button>' : ''}</p>`
+    : '';
   return `<div class="vehicle-parking-form">
+    ${catalogNotice}
     <div class="form-row vehicle-class-row">
-      <label>クラス<select name="parkingClass" data-vehicle-class required ${catalog.vehicle_classes.length ? '' : 'disabled'}>
-        ${catalog.vehicle_classes.map((item) =>
+      <label>クラス<select name="parkingClass" data-vehicle-class required ${preview || !formCatalog.vehicle_classes.length ? 'disabled' : ''}>
+        ${formCatalog.vehicle_classes.map((item) =>
           `<option value="${text(item.name)}">${text(item.name)}</option>`
-        ).join('') || '<option value="">車両クラスが登録されていません</option>'}
+        ).join('') || `<option value="">${preview ? '店舗選択後に読み込み' : '車両クラスが登録されていません'}</option>`}
       </select></label>${defaultLocation}
     </div>
     <fieldset class="option-fields"><legend>オプション</legend><div class="status-option-list">
-      ${catalog.vehicle_options.map((item) => `<label class="check-label">
-        <input type="checkbox" name="parkingOptions" value="${text(item.name)}">${text(item.name)}
+      ${formCatalog.vehicle_options.map((item) => `<label class="check-label">
+        <input type="checkbox" name="parkingOptions" value="${text(item.name)}" ${preview ? 'disabled' : ''}>${text(item.name)}
       </label>`).join('') || '<span class="status-empty">オプションはありません。</span>'}
     </div></fieldset>
     <fieldset class="status-fields"><legend>対応ステータス</legend><div class="status-option-list">
-      ${catalog.statuses.map((item) => `<label class="check-label">
-        <input type="checkbox" name="parkingStatusIds" value="${text(item.id)}">${text(item.icon)} ${text(item.name)}
+      ${formCatalog.statuses.map((item) => `<label class="check-label">
+        <input type="checkbox" name="parkingStatusIds" value="${text(item.id)}" ${preview ? 'disabled' : ''}>${text(item.icon)} ${text(item.name)}
       </label>`).join('')}
-      <label class="check-label"><input type="checkbox" name="parkingUnwashed">🫧 洗車待ち</label>
-      <label class="check-label"><input type="checkbox" name="parkingNoFuel">⛽ 給油待ち</label>
-      <label class="check-label"><input type="checkbox" name="parkingNeedsRepair">🔧 要修理</label>
-      ${catalog.statuses.length ? '' : '<span class="status-empty">対応ステータスはありません。</span>'}
+      ${formCatalog.statuses.length ? '' : '<span class="status-empty">対応ステータスはありません。</span>'}
     </div></fieldset>
     <section class="assessment-section">
       <h3>車両状態評価シート</h3>${assessmentGroups ||
         '<p class="assessment-empty">評価項目はありません。駐車場設定で追加できます。</p>'}
       <label class="assessment-notes-field">備考欄
         <textarea name="parkingNotes" rows="4" maxlength="5000"
-          placeholder="車両について共有したいことを記録できます。"></textarea>
+          placeholder="車両について共有したいことを記録できます。" ${preview ? 'disabled' : ''}></textarea>
       </label>
     </section>
     <section class="inspection-section">
       <h3>車体の損傷位置</h3>
-      ${catalog.damage_types.length
-        ? `<div class="damage-type-palette" data-vehicle-damage-palette>${catalog.damage_types.map((item) =>
+      ${formCatalog.damage_types.length
+        ? `<div class="damage-type-palette" ${preview ? '' : 'data-vehicle-damage-palette'}>${formCatalog.damage_types.map((item) =>
           `<button class="damage-type-button" type="button" data-damage-type="${text(item.id)}"
-            style="--damage-color:${text(item.color)}">${text(item.icon)} ${text(item.name)}</button>`
+            style="--damage-color:${text(item.color)}" ${preview ? 'disabled' : ''}>${text(item.icon)} ${text(item.name)}</button>`
         ).join('')}</div>
           <p class="inspection-hint" aria-live="polite">傷または凹みのアイコンを押したまま、3D車体の表面までドラッグしてください。</p>
-          <div class="inspection-car-view" data-vehicle-inspection-view
-            role="application" aria-label="3D車両モデル"></div>
-          <div class="inspection-mark-list" data-vehicle-inspection-marks></div>`
+          <div class="inspection-car-view" ${preview ? '' : 'data-vehicle-inspection-view'}
+            ${preview ? 'role="note"' : 'role="application"'} aria-label="3D車両モデル">${
+              preview ? '<p class="inspection-preview-note">店舗を選択すると3D車両モデルを読み込みます。</p>' : ''
+            }</div>
+          <div class="inspection-mark-list" ${preview ? '' : 'data-vehicle-inspection-marks'}></div>`
         : '<p class="assessment-empty">損傷の種類はありません。駐車場設定で追加できます。</p>'}
     </section>
   </div>`;
 }
-function renderVehicleParkingCatalog(container: HTMLElement, catalog: ParkingVehicleCatalog | null, loading = false) {
+function renderVehicleParkingCatalog(
+  container: HTMLElement,
+  catalog: ParkingVehicleCatalog | null,
+  loading = false,
+  error = false
+) {
   parkingInspection?.dispose();
   parkingInspection = null;
-  setHtml(container, vehicleParkingFields(catalog, loading));
+  setHtml(container, vehicleParkingFields(catalog, loading, error));
   vehicleCreateDamageTypes = catalog?.damage_types ?? [];
   const submit = container.closest('form')?.querySelector<HTMLButtonElement>('button[type="submit"]');
-  if (submit) submit.disabled = loading || !catalog?.vehicle_classes.length;
+  if (submit) submit.disabled = loading || !catalog || !catalog.vehicle_classes.length;
   if (!catalog?.damage_types.length) return;
   const palette = $('[data-vehicle-damage-palette]', container);
   const view = $('[data-vehicle-inspection-view]', container);
@@ -1203,7 +1248,7 @@ async function loadVehicleParkingCatalog(container: HTMLElement, siteId: string,
     if (siteSelect && siteSelect.value !== siteId) return;
     parkingInspection?.dispose();
     parkingInspection = null;
-    setHtml(container, '<p class="section-note full" role="alert">駐車場設定を読み込めませんでした。</p>');
+    renderVehicleParkingCatalog(container, null, false, true);
     const submit = container.closest('form')?.querySelector<HTMLButtonElement>('button[type="submit"]');
     if (submit) submit.disabled = true;
     toast(humanError((error as Error).message), true);
@@ -1863,6 +1908,18 @@ async function handleSubmit(event: Event) {
   }
 }
 async function handleClick(event: MouseEvent) {
+  const retryCatalogButton = (event.target as HTMLElement).closest<HTMLButtonElement>(
+    '[data-action="vehicle-catalog-retry"]'
+  );
+  if (retryCatalogButton) {
+    const form = retryCatalogButton.closest<HTMLFormElement>('form');
+    const siteSelect = form?.querySelector<HTMLSelectElement>('[data-vehicle-site]');
+    const fields = form?.querySelector<HTMLElement>('[data-vehicle-parking-fields]');
+    if (siteSelect?.value && fields) {
+      await loadVehicleParkingCatalog(fields, siteSelect.value, siteSelect);
+    }
+    return;
+  }
   const ratingButton = (event.target as HTMLElement).closest<HTMLButtonElement>(
     '[data-action="vehicle-rating"]'
   );
