@@ -1080,20 +1080,24 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
   };
   const assessmentControl = (item: ParkingAssessmentField, labelId: string) => {
     const id = text(item.id);
-    const suffix = item.suffix ? ` ${text(item.suffix)}` : '';
     if (item.field_type === 'rating') {
       return `<input type="hidden" data-assessment-id="${id}">
-        <div class="rating-control" role="group" aria-labelledby="${labelId}">${[1, 2, 3, 4, 5].map((score) =>
+        <div class="rating-control" role="group" aria-label="${text(item.name)}の評価">${[1, 2, 3, 4, 5].map((score) =>
           `<button type="button" data-action="vehicle-rating" data-rating-assessment-id="${id}"
             data-score="${score}" aria-label="${score}点" aria-pressed="false">${score}</button>`
         ).join('')}</div>`;
     }
     if (item.field_type === 'checkbox') {
-      return `<input type="checkbox" data-assessment-id="${id}" aria-labelledby="${labelId}">`;
+      return `${item.suffix ? `<span class="assessment-field-suffix">${text(item.suffix)}</span>` : ''}
+        <input type="checkbox" data-assessment-id="${id}" aria-labelledby="${labelId}">`;
     }
+    const isMonth = item.built_in_key === 'registration_month';
+    const isYear = item.built_in_key === 'registration_year';
     return `<input data-assessment-id="${id}"
       type="${item.field_type === 'number' ? 'number' : 'text'}"
-      ${item.field_type === 'number' ? 'min="0" max="999999999999" step="1" inputmode="numeric"' : 'maxlength="500"'}
+      ${item.field_type === 'number'
+        ? `min="${isMonth ? 1 : 0}" ${isMonth ? 'max="12"' : isYear ? `max="${new Date().getFullYear()}"` : 'max="999999999999"'} step="1" inputmode="numeric" maxlength="12" ${isMonth ? 'placeholder="1〜12"' : ''}`
+        : 'maxlength="500"'}
       aria-labelledby="${labelId}">${item.suffix ? `<span class="assessment-field-suffix">${text(item.suffix)}</span>` : ''}`;
   };
   const assessmentGroups = Object.entries(groups).map(([groupKey, groupLabel]) => {
@@ -1101,13 +1105,13 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
     const erpFields = groupKey === 'basic' ? vehicleErpBasicFields() : '';
     if (!fields.length && !erpFields) return '';
     return `<section class="assessment-group"><h4>${groupLabel}</h4><div class="assessment-field-grid">
-      ${erpFields}${fields.map((item) => {
+      ${fields.map((item) => {
         const labelId = `assessment-label-${text(item.id)}`;
         return `<div class="assessment-field">
-        <span id="${labelId}">${text(item.name)}${item.suffix ? `（${text(item.suffix)}）` : ''}</span>
+        <span id="${labelId}">${text(item.name)}</span>
         <div class="assessment-field-control">${assessmentControl(item, labelId)}</div>
       </div>`;
-      }).join('')}
+      }).join('')}${erpFields}
     </div></section>`;
   }).join('');
   const defaultLot = catalog.parking_lots.find((lot) => lot.is_active);
@@ -1185,6 +1189,25 @@ function renderVehicleParkingCatalog(container: HTMLElement, catalog: ParkingVeh
   if (canvas) canvas.setAttribute(
     'aria-label', translateText('3D車両を回転し損傷箇所をクリックして記録', activeLanguage())
   );
+}
+async function loadVehicleParkingCatalog(container: HTMLElement, siteId: string, siteSelect?: HTMLSelectElement) {
+  vehicleCreateInspectionMarks = [];
+  renderVehicleParkingCatalog(container, null, true);
+  try {
+    const catalog = await api<ParkingVehicleCatalog>(
+      `/api/v1/parking/vehicle-catalog?${new URLSearchParams({ siteId })}`
+    );
+    if (siteSelect && siteSelect.value !== siteId) return;
+    renderVehicleParkingCatalog(container, catalog);
+  } catch (error) {
+    if (siteSelect && siteSelect.value !== siteId) return;
+    parkingInspection?.dispose();
+    parkingInspection = null;
+    setHtml(container, '<p class="section-note full" role="alert">駐車場設定を読み込めませんでした。</p>');
+    const submit = container.closest('form')?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (submit) submit.disabled = true;
+    toast(humanError((error as Error).message), true);
+  }
 }
 function renderVehicleDamageMarks(
   marks: ParkingInspectionMark[],
@@ -1291,9 +1314,14 @@ async function openModal(which: string, id = '') {
       const canManageParking = can('parking:read') && can('parking:write');
       const parking = canManageParking && !isHeadquarters
         ? await api<ParkingVehicleCatalog>('/api/v1/parking/vehicle-catalog') : null;
+      const selectableSites = cachedSites.filter((site) =>
+        site.type !== 'headquarters' && site.status === 'active'
+      );
+      const initialSiteId = isHeadquarters && selectableSites.length === 1
+        ? selectableSites[0].id : '';
       const siteField = isHeadquarters
         ? `<div class="field"><label for="f-siteId">所属店舗</label><select id="f-siteId" name="siteId" data-vehicle-site required>
-          <option value="">店舗を選択してください</option>${siteOptions()}</select></div>`
+          <option value="">店舗を選択してください</option>${siteOptions(initialSiteId)}</select></div>`
         : `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
       vehicleCreateInspectionMarks = [];
       vehicleCreateDamageTypes = parking?.damage_types ?? [];
@@ -1307,7 +1335,12 @@ async function openModal(which: string, id = '') {
       const parkingFields = $('[data-vehicle-parking-fields]');
       if (parkingFields && parking) renderVehicleParkingCatalog(parkingFields, parking);
       else if (parkingFields && isHeadquarters) {
-        renderVehicleParkingCatalog(parkingFields, null);
+        const siteSelect = $('[data-vehicle-site]');
+        if (initialSiteId && siteSelect instanceof HTMLSelectElement) {
+          await loadVehicleParkingCatalog(parkingFields, initialSiteId, siteSelect);
+        } else {
+          renderVehicleParkingCatalog(parkingFields, null);
+        }
       }
     } else if (which === 'edit-vehicle') {
       const vehicle = currentVehicles.find((item) => item.id === id);
@@ -2180,22 +2213,8 @@ function handleChange(event: Event) {
     if (!parkingFields) return;
     const selectedSiteId = target.value;
     vehicleCreateInspectionMarks = [];
-    renderVehicleParkingCatalog(parkingFields, null, Boolean(selectedSiteId));
-    if (!selectedSiteId) return;
-    void api<ParkingVehicleCatalog>(
-      `/api/v1/parking/vehicle-catalog?${new URLSearchParams({ siteId: selectedSiteId })}`
-    ).then((catalog) => {
-      if (target.value !== selectedSiteId) return;
-      renderVehicleParkingCatalog(parkingFields, catalog);
-    }).catch((error) => {
-      if (target.value !== selectedSiteId) return;
-      parkingInspection?.dispose();
-      parkingInspection = null;
-      setHtml(parkingFields, '<p class="section-note full" role="alert">駐車場設定を読み込めませんでした。</p>');
-      const submit = parkingFields.closest('form')?.querySelector<HTMLButtonElement>('button[type="submit"]');
-      if (submit) submit.disabled = true;
-      toast(humanError((error as Error).message), true);
-    });
+    if (selectedSiteId) void loadVehicleParkingCatalog(parkingFields, selectedSiteId, target);
+    else renderVehicleParkingCatalog(parkingFields, null);
   } else if (target.matches('[data-status]')) {
     statusFilter = target.value; offset = 0; void loadPage();
   } else if (target.matches('[data-reservation-site]')) {
