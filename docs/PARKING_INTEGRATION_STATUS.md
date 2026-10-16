@@ -27,6 +27,11 @@ claim that a production data migration or cutover has been completed.
   a separate page with the lot map, status and job panels, and a searchable
   vehicle catalog. Lot area width and map height can be adjusted directly by
   dragging the map corner; the values are saved to the ERP database.
+- The ERP vehicle-creation form also captures the legacy Parking registration
+  details: class, options, parking lot, business statuses, assessment fields,
+  notes, service flags, and 3D damage marks. ERP and parking rows plus their
+  related data are created in one MySQL transaction; the standalone legacy
+  Parking repository is unchanged.
 - The explicit SQLite importer requires tenant/account/site mappings, supports
   preflight and dry-run, creates a source backup before writes, imports in a
   MySQL transaction, checks IDs/row counts, and does not copy legacy passwords
@@ -42,11 +47,11 @@ claim that a production data migration or cutover has been completed.
   caches API responses or authenticated business data; data operations require
   a network connection.
 - Deployment and migration documents include cutover checks, data retention,
-  and rollback cautions. Version is `0.6.0`.
+  and rollback cautions. Version is `0.8.0`.
 
 ## Verified in this workspace
 
-- ERP automated tests: 71 passed.
+- ERP automated tests: 81 passed.
 - Legacy Parking regression tests: 31 passed.
 - ERP frontend typecheck and production bundle build passed.
 - Parking server endpoints for the PWA manifest, service worker, and icon have

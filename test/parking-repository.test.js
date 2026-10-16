@@ -2,6 +2,28 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createParkingRepository } from '../src/repositories/parking-repository.js';
 
+test('new parking vehicles use an unused position in the selected lot under its lock', async () => {
+  const calls = [];
+  const transaction = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('FROM parking_lots')) return [{ id: '11' }];
+      if (sql.includes('FROM parking_vehicles')) return [
+        { position_x: '0.125', position_y: '0.06' }
+      ];
+      throw new Error(`Unexpected parking query: ${sql}`);
+    }
+  };
+  const position = await createParkingRepository({}).nextVehiclePosition({
+    siteId: '3', parkingLotId: 11
+  }, transaction);
+
+  assert.deepEqual(position, { positionX: 0.375, positionY: 0.0625 });
+  assert.match(calls[0].sql, /FOR UPDATE$/);
+  assert.deepEqual(calls[0].params, [11, '3']);
+  assert.deepEqual(calls[1].params, ['3', 11]);
+});
+
 test('parking bootstrap loads the full ERP-backed board only for the requested site', async () => {
   const seen = [];
   const db = {

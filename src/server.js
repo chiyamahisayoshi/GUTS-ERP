@@ -130,10 +130,10 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
   const db = createMysqlRepository(mysqlPool);
   const accounts = createAccountRepository(db);
   const admin = createAdminRepository(db);
-  const vehicles = createVehicleRepository(db);
+  const parkingBoard = createParkingRepository(db);
+  const vehicles = createVehicleRepository(db, parkingBoard);
   const reservations = createReservationRepository(db);
   const employees = createEmployeeRepository(db);
-  const parkingBoard = createParkingRepository(db);
   const auth = createAuthService({ accounts, jwt: app.jwt, config });
   registerRoutes(app, {
     accounts, admin, vehicles, reservations, employees, auth, parkingBoard, parkingRealtime

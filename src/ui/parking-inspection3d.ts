@@ -14,7 +14,8 @@ export function mountParkingInspection(
   container: HTMLElement,
   damageTypes: InspectionDamageType[],
   initialMarks: InspectionMark[],
-  onChange: (marks: InspectionMark[]) => void
+  onChange: (marks: InspectionMark[]) => void,
+  paletteContainer: HTMLElement = container
 ) {
   const canvas = document.createElement('canvas');
   canvas.className = 'parking-inspection-canvas';
@@ -212,7 +213,7 @@ export function mountParkingInspection(
       startX: event.clientX, startY: event.clientY, moved: false, ghost: null
     };
     button.setPointerCapture(event.pointerId);
-    container.querySelectorAll('[data-damage-type]').forEach((item) => item.classList.remove('selected'));
+    paletteContainer.querySelectorAll('[data-damage-type]').forEach((item) => item.classList.remove('selected'));
     button.classList.add('selected');
     event.preventDefault();
   };
@@ -255,10 +256,10 @@ export function mountParkingInspection(
   canvas.addEventListener('pointermove', onPointerMove);
   canvas.addEventListener('pointerup', onPointerUp);
   canvas.addEventListener('pointercancel', () => { pointer = null; });
-  container.addEventListener('pointerdown', onPalettePointerDown);
-  container.addEventListener('pointermove', onPalettePointerMove);
-  container.addEventListener('pointerup', onPalettePointerUp);
-  container.addEventListener('pointercancel', onPalettePointerUp);
+  paletteContainer.addEventListener('pointerdown', onPalettePointerDown);
+  paletteContainer.addEventListener('pointermove', onPalettePointerMove);
+  paletteContainer.addEventListener('pointerup', onPalettePointerUp);
+  paletteContainer.addEventListener('pointercancel', onPalettePointerUp);
   setCamera();
   drawMarks();
   resize();
@@ -268,10 +269,10 @@ export function mountParkingInspection(
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
-      container.removeEventListener('pointerdown', onPalettePointerDown);
-      container.removeEventListener('pointermove', onPalettePointerMove);
-      container.removeEventListener('pointerup', onPalettePointerUp);
-      container.removeEventListener('pointercancel', onPalettePointerUp);
+      paletteContainer.removeEventListener('pointerdown', onPalettePointerDown);
+      paletteContainer.removeEventListener('pointermove', onPalettePointerMove);
+      paletteContainer.removeEventListener('pointerup', onPalettePointerUp);
+      paletteContainer.removeEventListener('pointercancel', onPalettePointerUp);
       renderer.dispose();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {

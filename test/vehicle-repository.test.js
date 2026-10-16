@@ -17,14 +17,25 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
     return { insertId: 1 };
   };
   let transactionCount = 0;
-  const db = {
-    query,
-    transaction: async (callback) => {
-      transactionCount += 1;
-      return callback({ query });
+  let parkingUpdate;
+  const db = { query };
+  const parkingBoard = {
+    nextVehiclePosition: async (fields, transaction) => {
+      assert.deepEqual(fields, { siteId: '42', parkingLotId: 3 });
+      assert.equal(transaction, transactionConnection);
+      return { positionX: 0.125, positionY: 0.0625 };
+    },
+    updateVehicle: async (fields, transaction) => {
+      parkingUpdate = { fields, transaction };
+      return { id: 1 };
     }
   };
-  const vehicle = await createVehicleRepository(db).create({
+  const transactionConnection = { query };
+  db.transaction = async (callback) => {
+    transactionCount += 1;
+    return callback(transactionConnection);
+  };
+  const vehicle = await createVehicleRepository(db, parkingBoard).create({
     id: vehicleId,
     siteId: '42',
     registrationNumber: '品川500あ1234',
@@ -32,7 +43,14 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
     model: 'Aqua',
     parkingClass: 'A-1',
     parkingOptions: ['ナビ'],
-    parkingNotes: '登録メモ'
+    parkingNotes: '登録メモ',
+    parkingLotId: 3,
+    parkingStatusIds: [4],
+    parkingUnwashed: true,
+    parkingNoFuel: false,
+    parkingNeedsRepair: false,
+    parkingAssessmentValues: { '31': '5' },
+    parkingInspectionMarks: [{ id: 'damage-a', damage_type_id: 41, x: 0.3, y: 0.7 }]
   });
 
   const erpInsert = statements.find(({ sql }) => sql.includes('INSERT INTO vehicles'));
@@ -46,6 +64,14 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
   ]);
   assert.equal(parkingInsert.params[5], JSON.stringify(['ナビ']));
   assert.equal(parkingInsert.params[6], '登録メモ');
+  assert.equal(parkingUpdate.transaction, transactionConnection);
+  assert.deepEqual(parkingUpdate.fields, {
+    siteId: '42', vehicleId: '1', positionX: 0.125, positionY: 0.0625,
+    parkingLotId: 3, statusIds: [4], unwashed: true,
+    noFuel: false, needsRepair: false,
+    assessmentValues: { '31': '5' },
+    inspectionMarks: [{ id: 'damage-a', damage_type_id: 41, x: 0.3, y: 0.7 }]
+  });
 });
 
 test('unknown parking class aborts before inserting either vehicle row', async () => {
