@@ -435,6 +435,57 @@ test('parking option deletion removes saved options and stores built-in suppress
       JSON.stringify(params) === JSON.stringify(['3', 'etc'])));
 });
 
+test('parking option edits rename saved vehicle selections within their site', async () => {
+  const calls = [];
+  const db = {
+    async transaction(callback) {
+      return callback({
+        async query(sql, params) {
+          calls.push({ sql, params });
+          if (sql.includes('SELECT id, name FROM parking_vehicle_option_types')) {
+            return [{ id: '51', name: 'ETC' }];
+          }
+          if (sql.includes('SELECT id FROM parking_vehicle_option_types')) return [];
+          if (sql.includes('SELECT id, options FROM parking_vehicles')) {
+            return [
+              { id: '101', options: '["ETC","禁煙"]' },
+              { id: '102', options: '["ナビ"]' }
+            ];
+          }
+          return [];
+        }
+      });
+    }
+  };
+  assert.deepEqual(await createParkingRepository(db).updateVehicleOption({
+    siteId: '3', optionId: '51', name: 'ETC車載器'
+  }), { id: 51, name: 'ETC車載器' });
+  assert(calls.some(({ sql, params }) =>
+    sql.startsWith('UPDATE parking_vehicle_option_types') &&
+    JSON.stringify(params) === JSON.stringify(['ETC車載器', '51', '3'])));
+  assert(calls.some(({ sql, params }) =>
+    sql.startsWith('UPDATE parking_vehicles') &&
+    JSON.stringify(params) === JSON.stringify(['["ETC車載器","禁煙"]', '101', '3'])));
+  assert.equal(calls.filter(({ sql }) => sql.startsWith('UPDATE parking_vehicles')).length, 1);
+
+  const conflictDb = {
+    async transaction(callback) {
+      return callback({
+        async query(sql) {
+          if (sql.includes('SELECT id, name FROM parking_vehicle_option_types')) {
+            return [{ id: '51', name: 'ETC' }];
+          }
+          if (sql.includes('SELECT id FROM parking_vehicle_option_types')) return [{ id: '52' }];
+          return [];
+        }
+      });
+    }
+  };
+  await assert.rejects(createParkingRepository(conflictDb).updateVehicleOption({
+    siteId: '3', optionId: '51', name: '禁煙'
+  }), { code: 'ER_DUP_ENTRY' });
+});
+
 test('parking distance writes verify site-owned references before transactional upserts', async () => {
   const calls = [];
   const db = {

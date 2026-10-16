@@ -343,6 +343,49 @@ export function createParkingRepository(db) {
       return { id: numericId(result.insertId), name };
     },
 
+    async updateVehicleOption({ siteId, optionId, name }) {
+      return db.transaction(async (tx) => {
+        const rows = await tx.query(
+          `SELECT id, name FROM parking_vehicle_option_types
+            WHERE id = ? AND site_id = ? LIMIT 1`,
+          [optionId, siteId]
+        );
+        if (!rows.length) return null;
+        const currentName = rows[0].name;
+        if (name !== currentName) {
+          const conflicts = await tx.query(
+            `SELECT id FROM parking_vehicle_option_types
+              WHERE site_id = ? AND name = ? AND id <> ? LIMIT 1`,
+            [siteId, name, optionId]
+          );
+          if (conflicts.length) {
+            const error = new Error('Vehicle option name already exists.');
+            error.code = 'ER_DUP_ENTRY';
+            throw error;
+          }
+          await tx.query(
+            'UPDATE parking_vehicle_option_types SET name = ? WHERE id = ? AND site_id = ?',
+            [name, optionId, siteId]
+          );
+          const vehicles = await tx.query(
+            'SELECT id, options FROM parking_vehicles WHERE site_id = ?',
+            [siteId]
+          );
+          for (const vehicle of vehicles) {
+            const options = parseJson(vehicle.options, []);
+            const next = options.map((option) => option === currentName ? name : option);
+            if (next.some((option, index) => option !== options[index])) {
+              await tx.query(
+                'UPDATE parking_vehicles SET options = CAST(? AS JSON) WHERE id = ? AND site_id = ?',
+                [JSON.stringify(next), vehicle.id, siteId]
+              );
+            }
+          }
+        }
+        return { id: numericId(optionId), name };
+      });
+    },
+
     async deleteVehicleOption({ siteId, optionId }) {
       return db.transaction(async (tx) => {
         const rows = await tx.query(

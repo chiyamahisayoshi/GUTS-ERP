@@ -167,6 +167,15 @@ async function makeApp(user) {
       updateVehicleClass: async (input) => { calls.parkingCatalogWrites.push(['edit-class', input]); return { id: 41 }; },
       deleteVehicleClass: async (input) => { calls.parkingCatalogWrites.push(['delete-class', input]); return { deleted: true }; },
       createVehicleOption: async (input) => { calls.parkingCatalogWrites.push(['option', input]); return { id: 51 }; },
+      updateVehicleOption: async (input) => {
+        if (input.name === '禁煙') {
+          const error = new Error('Duplicate vehicle option.');
+          error.code = 'ER_DUP_ENTRY';
+          throw error;
+        }
+        calls.parkingCatalogWrites.push(['edit-option', input]);
+        return { id: 51, name: input.name };
+      },
       deleteVehicleOption: async (input) => { calls.parkingCatalogWrites.push(['delete-option', input]); return true; },
       createStore: async (input) => { calls.parkingLogisticsWrites.push(['store', input]); return { id: 61 }; },
       deleteStore: async (input) => { calls.parkingLogisticsWrites.push(['delete-store', input]); return true; },
@@ -1095,9 +1104,14 @@ test('parking class catalog writes require parking:admin rather than parking:wri
     method: 'PATCH', url: '/api/v1/parking/statuses/31', headers,
     payload: { name: '整備待ち', icon: '🔧' }
   });
+  const optionUpdate = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/options/51', headers,
+    payload: { name: 'ETC車載器' }
+  });
   assert.equal(create.statusCode, 403);
   assert.equal(update.statusCode, 403);
   assert.equal(statusUpdate.statusCode, 403);
+  assert.equal(optionUpdate.statusCode, 403);
   assert.deepEqual(calls.parkingCatalogWrites, []);
 });
 
@@ -1156,6 +1170,14 @@ test('parking status, class, and option catalogs share ERP parking admin permiss
     method: 'PATCH', url: '/api/v1/parking/statuses/31', headers,
     payload: { name: '整備待ち', icon: '🔧' }
   });
+  const optionUpdate = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/options/51', headers,
+    payload: { name: 'ETC車載器' }
+  });
+  const duplicateOption = await app.inject({
+    method: 'PATCH', url: '/api/v1/parking/options/51', headers,
+    payload: { name: '禁煙' }
+  });
   const vehicleClass = await app.inject({
     method: 'POST', url: '/api/v1/parking/classes', headers,
     payload: { name: 'A-2', color: '#4f86f7' }
@@ -1170,12 +1192,15 @@ test('parking status, class, and option catalogs share ERP parking admin permiss
   });
   assert.equal(status.statusCode, 201);
   assert.equal(statusUpdate.statusCode, 200);
+  assert.equal(optionUpdate.statusCode, 200);
+  assert.equal(duplicateOption.statusCode, 409);
   assert.equal(vehicleClass.statusCode, 201);
   assert.equal(option.statusCode, 201);
   assert.equal(classUpdate.statusCode, 200);
-  assert.deepEqual(calls.parkingCatalogWrites.slice(0, 5), [
+  assert.deepEqual(calls.parkingCatalogWrites.slice(0, 6), [
     ['status', { siteId: '2', name: '清掃待ち', icon: '🫧' }],
     ['edit-status', { siteId: '2', statusId: '31', name: '整備待ち', icon: '🔧' }],
+    ['edit-option', { siteId: '2', optionId: '51', name: 'ETC車載器' }],
     ['class', { siteId: '2', name: 'A-2', color: '#4f86f7' }],
     ['option', { siteId: '2', name: 'ETC' }],
     ['edit-class', { siteId: '2', classId: '41', name: 'A-3', color: '#ff0000' }]

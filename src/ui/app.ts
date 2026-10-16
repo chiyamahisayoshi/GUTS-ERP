@@ -944,9 +944,13 @@ async function renderParkingBoard() {
       <button class="btn btn-sm" type="submit">保存</button>
       <button class="btn btn-sm btn-quiet" type="button" data-action="parking-status-delete" data-id="${text(item.id)}">削除</button>
     </form>`).join('') || '<p class="empty">業務状態はありません</p>'}</div>
-    <div><h2>車両オプション</h2><form data-form="parking-option">
+    <div class="parking-option-settings"><h2>車両オプション</h2><form class="parking-option-create" data-form="parking-option">
       <input name="name" maxlength="40" placeholder="オプション名" required><button class="btn btn-sm" type="submit">追加</button>
-    </form>${board.vehicle_options.map((item) => `<div class="parking-catalog-row"><span>${text(item.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-option-delete" data-id="${text(item.id)}">削除</button></div>`).join('')}</div>
+    </form>${board.vehicle_options.map((item) => `<form class="parking-option-edit" data-form="parking-option-edit" data-id="${text(item.id)}">
+      <input name="name" maxlength="40" value="${text(item.name)}" aria-label="オプション名" required>
+      <button class="btn btn-sm" type="submit">保存</button>
+      <button class="btn btn-sm btn-quiet" type="button" data-action="parking-option-delete" data-id="${text(item.id)}">削除</button>
+    </form>`).join('') || '<p class="empty">車両オプションはありません</p>'}</div>
     <div><h2>フランチャイズ店舗 / 拠点</h2><p class="secondary">旧Parkingの店舗は現在のERP拠点に属する店舗データへ移行します。フランチャイズ拠点と店舗アカウントはERPの「店舗」「店舗アカウント」から管理してください。</p>
       <form data-form="parking-store"><input name="name" maxlength="120" placeholder="店舗名" required><button class="btn btn-sm" type="submit">追加</button></form>
       ${board.stores.map((store) => `<div class="parking-catalog-row"><span>${text(store.name)}</span><button class="btn btn-sm btn-quiet" data-action="parking-store-delete" data-id="${text(store.id)}">削除</button></div>`).join('') || '<p class="empty">店舗はありません</p>'}</div>
@@ -1986,6 +1990,10 @@ async function handleSubmit(event: Event) {
     } else if (kind === 'parking-option') {
       await api('/api/v1/parking/options', {
         method: 'POST', body: JSON.stringify({ name: value('name') })
+      });
+    } else if (kind === 'parking-option-edit') {
+      await api(`/api/v1/parking/options/${encodeURIComponent(form.dataset.id!)}`, {
+        method: 'PATCH', body: JSON.stringify({ name: value('name') })
       });
     } else if (kind === 'parking-store') {
       await api('/api/v1/parking/stores', {

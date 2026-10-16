@@ -441,6 +441,34 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     return reply.code(201).send(option);
   });
 
+  app.patch('/api/v1/parking/options/:id', {
+    preHandler: requirePermissions(['parking:read', 'parking:admin']),
+    schema: {
+      params: {
+        type: 'object', required: ['id'],
+        properties: { id: { type: 'string', pattern: '^[1-9][0-9]*$' } }
+      },
+      body: {
+        type: 'object', additionalProperties: false, required: ['name'],
+        properties: { name: { type: 'string', minLength: 1, maxLength: 40 } }
+      }
+    }
+  }, async (request, reply) => {
+    const name = request.body.name.trim();
+    if (!name) return reply.code(422).send({ error: 'invalid_request' });
+    try {
+      const option = await parkingBoard.updateVehicleOption({
+        siteId: request.user.siteId, optionId: request.params.id, name
+      });
+      if (!option) return reply.code(404).send({ error: 'not_found' });
+      parkingRealtime.publish(request.user.siteId);
+      return reply.code(200).send(option);
+    } catch (error) {
+      if (error.code === 'ER_DUP_ENTRY') return reply.code(409).send({ error: 'resource_conflict' });
+      throw error;
+    }
+  });
+
   app.delete('/api/v1/parking/options/:id', {
     preHandler: requirePermissions(['parking:read', 'parking:admin']),
     schema: {

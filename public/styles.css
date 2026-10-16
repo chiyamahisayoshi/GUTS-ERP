@@ -200,4 +200,8 @@ button:disabled{cursor:not-allowed;opacity:.58;transform:none!important}
 .parking-status-settings .parking-status-edit input:focus,.parking-status-settings .parking-status-create input:focus{border-color:#087e8b;outline:2px solid #087e8b25;outline-offset:1px}
 .parking-status-preview{display:grid;width:26px;height:26px;place-items:center;border-radius:6px;background:#f1f5f7;font-size:15px}
 .parking-status-settings .parking-status-edit .btn{min-height:32px;padding:5px 9px}
+.parking-option-settings .parking-option-edit{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:6px;padding:7px 0;border-top:1px solid #e8edf1}
+.parking-option-settings .parking-option-edit input{min-width:0;width:100%;height:34px;padding:0 8px;border:1px solid #d7e0e7;border-radius:6px;background:#fff;color:#304252;font:inherit;font-size:12px}
+.parking-option-settings .parking-option-edit input:focus,.parking-option-settings .parking-option-create input:focus{border-color:#087e8b;outline:2px solid #087e8b25;outline-offset:1px}
+.parking-option-settings .parking-option-edit .btn{min-height:32px;padding:5px 9px}
 @media(max-width:760px){.vehicle-create-modal{width:min(calc(100vw - 20px),900px)}.vehicle-create-header{padding:9px 16px}.vehicle-create-body{padding:14px 18px 20px}.vehicle-dates-grid{grid-template-columns:1fr;gap:10px}.vehicle-section-heading{align-items:flex-start;flex-direction:column;gap:4px}.assessment-field-grid{grid-template-columns:1fr}.assessment-field{min-height:48px}.parking-status-settings .parking-status-edit{grid-template-columns:24px minmax(0,1fr) 48px auto auto;gap:4px}.parking-status-settings .parking-status-edit .btn{padding:5px 6px}}
