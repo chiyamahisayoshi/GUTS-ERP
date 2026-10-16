@@ -705,7 +705,7 @@ async function renderVehicles() {
   const result = await api<{ items: Vehicle[] }>(`/api/v1/vehicles?${params}`);
   currentVehicles = result.items;
   const rows = result.items.map((item) => `<tr>
-    <td class="primary-cell" data-label="車両">${text(item.registration_number)}<span class="secondary">${text(item.make)} ${text(item.model)} ${item.model_year ? `・${item.model_year}` : ''}</span></td>
+    <td class="primary-cell" data-label="車両">${text(item.registration_number)}${item.make || item.model || item.model_year ? `<span class="secondary">${text(item.make)} ${text(item.model)} ${item.model_year ? `・${item.model_year}` : ''}</span>` : ''}</td>
     <td data-label="店舗">${text(cachedSites.find((site) => site.id === item.site_id)?.name ??
       (profile!.site.id === item.site_id ? profile!.site.name : item.site_id))}</td>
     <td data-label="状態">${badge(item.status)}</td>
@@ -1204,23 +1204,6 @@ function clearSiteData() {
   currentVehicles = [];
   currentParkingBoard = null;
 }
-function vehicleErpBasicFields() {
-  return `<div class="assessment-field"><span>メーカー</span><div class="assessment-field-control">
-      <input name="make" type="text" maxlength="80" required aria-label="メーカー"></div></div>
-    <div class="assessment-field"><span>車種</span><div class="assessment-field-control">
-      <input name="model" type="text" maxlength="100" required aria-label="車種"></div></div>
-    <div class="assessment-field"><span>車台番号</span><div class="assessment-field-control">
-      <input name="vin" type="text" maxlength="32" aria-label="車台番号（任意）"></div></div>
-    <div class="assessment-field"><span>年式</span><div class="assessment-field-control">
-      <input name="modelYear" type="number" min="1900" max="2200" step="1" inputmode="numeric" aria-label="年式（任意）"></div></div>`;
-}
-function vehicleErpBasicSection() {
-  return `<section class="assessment-section"><h3>車両情報</h3>
-    <section class="assessment-group"><h4>基本情報</h4>
-      <div class="assessment-field-grid">${vehicleErpBasicFields()}</div>
-    </section>
-  </section>`;
-}
 function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = false, error = false) {
   const preview = !catalog;
   const formCatalog = catalog ?? parkingVehicleFormPreview;
@@ -1252,8 +1235,7 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
   };
   const assessmentGroups = Object.entries(groups).map(([groupKey, groupLabel]) => {
     const fields = formCatalog.assessment_fields.filter((item) => (item.group_key ?? 'custom') === groupKey);
-    const erpFields = groupKey === 'basic' ? vehicleErpBasicFields() : '';
-    if (!fields.length && !erpFields) return '';
+    if (!fields.length) return '';
     return `<section class="assessment-group"><h4>${groupLabel}</h4><div class="assessment-field-grid">
       ${fields.map((item) => {
         const labelId = `assessment-label-${text(item.id)}`;
@@ -1261,7 +1243,7 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
         <span id="${labelId}">${text(item.name)}</span>
         <div class="assessment-field-control">${assessmentControl(item, labelId)}</div>
       </div>`;
-      }).join('')}${erpFields}
+      }).join('')}
     </div></section>`;
   }).join('');
   const defaultLot = formCatalog.parking_lots.find((lot) => lot.is_active);
@@ -1487,7 +1469,7 @@ async function openModal(which: string, id = '') {
           ${field('registrationNumber', 'ナンバー', 'text', '', '例: 品川 500 あ 1234', true)}
         </div>
         ${siteField}
-        ${canManageParking ? '<div data-vehicle-parking-fields></div>' : vehicleErpBasicSection()}
+        ${canManageParking ? '<div data-vehicle-parking-fields></div>' : ''}
       </div>`, 'vehicle');
       const parkingFields = $('[data-vehicle-parking-fields]');
       if (parkingFields && parking) renderVehicleParkingCatalog(parkingFields, parking);
@@ -1501,8 +1483,8 @@ async function openModal(which: string, id = '') {
       modalTemplate('車両情報を編集', `${text(vehicle.registration_number)} · 固定車両IDは変更されません`, `<input type="hidden" name="id" value="${text(vehicle.id)}"><div class="form-grid">
         ${field('registrationNumber', 'ナンバープレート', 'text', vehicle.registration_number, '', true)}
         ${field('vin', '車台番号', 'text', vehicle.vin ?? '')}
-        ${field('make', 'メーカー', 'text', vehicle.make, '', true)}
-        ${field('model', '車種', 'text', vehicle.model, '', true)}
+        ${field('make', 'メーカー', 'text', vehicle.make)}
+        ${field('model', '車種', 'text', vehicle.model)}
         ${field('modelYear', '年式', 'number', String(vehicle.model_year ?? ''))}
         ${siteField}
         ${selectField('status', '車両の状態', ['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${vehicle.status === status ? 'selected' : ''}>${label(status)}</option>`).join(''))}
@@ -1842,8 +1824,7 @@ async function handleSubmit(event: Event) {
       });
     } else if (kind === 'vehicle') {
       const vehiclePayload: Record<string, unknown> = {
-        registrationNumber: value('registrationNumber'), vin: value('vin') || undefined,
-        make: value('make'), model: value('model'), modelYear: value('modelYear') ? Number(value('modelYear')) : undefined,
+        registrationNumber: value('registrationNumber'),
         siteId: value('siteId')
       };
       if (can('parking:read') && can('parking:write')) {

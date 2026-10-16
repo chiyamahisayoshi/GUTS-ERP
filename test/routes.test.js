@@ -13,7 +13,7 @@ const jwtConfig = {
 async function makeApp(user) {
   const calls = {
     vehicleList: null, createdVehicle: null, reservationList: null,
-    createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
+    updatedVehicle: null, createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
     createdAccount: null, employeeList: null, createdEmployee: null, updatedEmployee: null,
     parkingSyncVehicles: null, parkingSyncResult: { created: 1, updated: 0, synced: 1 },
     parkingSyncError: null,
@@ -71,7 +71,10 @@ async function makeApp(user) {
         calls.createdVehicle = vehicle;
         return vehicle;
       },
-      update: async () => null,
+      update: async (id, fields) => {
+        calls.updatedVehicle = { id, fields };
+        return { id, ...fields };
+      },
       listForParkingSync: async () => [{
         id: 'vehicle-uuid', registration_number: '品川500あ1234',
         make: 'Toyota', model: 'Aqua', site_id: '2'
@@ -443,6 +446,27 @@ test('store users receive ERP-issued vehicle IDs and cannot assign another site'
   assert.match(calls.createdVehicle.id, /^[0-9a-f-]{36}$/);
 });
 
+test('vehicles created without manufacturer data remain editable', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: ['vehicles:write']
+  });
+  t.after(() => app.close());
+
+  const vehicleId = '11111111-2222-4333-8444-555555555555';
+  const response = await app.inject({
+    method: 'PATCH', url: `/api/v1/vehicles/${vehicleId}`,
+    headers: { authorization: `Bearer ${token}` },
+    payload: {
+      registrationNumber: '品川500あ1234', vin: null, make: '', model: '',
+      modelYear: null, siteId: '2', status: 'available'
+    }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(calls.updatedVehicle.id, vehicleId);
+  assert.equal(calls.updatedVehicle.fields.make, '');
+  assert.equal(calls.updatedVehicle.fields.model, '');
+});
+
 test('headquarters vehicle creation defaults to the administrator home site', async (t) => {
   const { app, token, calls } = await makeApp({
     sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['vehicles:write']
@@ -473,8 +497,6 @@ test('parking class selection creates the ERP vehicle and scopes its parking lin
     headers: { authorization: ['Bearer', token].join(' ') },
     payload: {
       registrationNumber: '品川500あ1234',
-      make: 'Toyota',
-      model: 'Aqua',
       siteId: '2',
       parkingClass: 'A-1',
       parkingOptions: ['ナビ'],
@@ -490,6 +512,8 @@ test('parking class selection creates the ERP vehicle and scopes its parking lin
   });
   assert.equal(response.statusCode, 201);
   assert.equal(calls.createdVehicle.siteId, '2');
+  assert.equal(calls.createdVehicle.make, '');
+  assert.equal(calls.createdVehicle.model, '');
   assert.equal(calls.createdVehicle.parkingClass, 'A-1');
   assert.equal(calls.createdVehicle.parkingLotId, 3);
   assert.deepEqual(calls.createdVehicle.parkingStatusIds, [4]);

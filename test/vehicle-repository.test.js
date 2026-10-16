@@ -39,8 +39,6 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
     id: vehicleId,
     siteId: '42',
     registrationNumber: '品川500あ1234',
-    make: 'Toyota',
-    model: 'Aqua',
     parkingClass: 'A-1',
     parkingOptions: ['ナビ'],
     parkingNotes: '登録メモ',
@@ -58,6 +56,9 @@ test('vehicle and parking rows share the ERP UUID in one transaction', async () 
   assert.equal(transactionCount, 1);
   assert.equal(vehicle.id, vehicleId);
   assert.ok(erpInsert);
+  assert.deepEqual(erpInsert.params, [
+    vehicleId, '品川500あ1234', null, '', '', null, '42', 'available'
+  ]);
   assert.ok(parkingInsert);
   assert.deepEqual(parkingInsert.params.slice(0, 5), [
     '42', vehicleId, vehicleId, '品川500あ1234', 'A-1'
