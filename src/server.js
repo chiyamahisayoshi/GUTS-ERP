@@ -13,6 +13,7 @@ import { createAuthSessionRepository } from './repositories/auth-session-reposit
 import { createAdminRepository } from './repositories/admin-repository.js';
 import { createVehicleRepository } from './repositories/vehicle-repository.js';
 import { createReservationRepository } from './repositories/reservation-repository.js';
+import { createCustomerRepository } from './repositories/customer-repository.js';
 import { createEmployeeRepository } from './repositories/employee-repository.js';
 import { createParkingRepository } from './repositories/parking-repository.js';
 import { createParkingRealtime } from './parking-realtime.js';
@@ -135,10 +136,11 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
   const parkingBoard = createParkingRepository(db);
   const vehicles = createVehicleRepository(db, parkingBoard);
   const reservations = createReservationRepository(db);
+  const customers = createCustomerRepository(db);
   const employees = createEmployeeRepository(db);
   const auth = createAuthService({ accounts, sessions: authSessions, jwt: app.jwt, config });
   registerRoutes(app, {
-    accounts, admin, vehicles, reservations, employees, auth, parkingBoard, parkingRealtime
+    accounts, admin, vehicles, reservations, customers, employees, auth, parkingBoard, parkingRealtime
   }, errors, () => mysqlPool.execute('SELECT 1'));
 
   app.setErrorHandler((error, request, reply) => {
