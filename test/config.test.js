@@ -45,7 +45,9 @@ test('legacy Parking network settings are not part of ERP runtime configuration'
     PARKING_BACKEND_URL: 'http://legacy-parking.invalid'
   });
   try {
-    assert.equal(Object.hasOwn(getConfig(), 'parking'), false);
+    const config = getConfig();
+    assert.equal(Object.hasOwn(config, 'parking'), false);
+    assert.equal(config.jwt.refreshExpiresIn, 30 * 24 * 60 * 60);
   } finally {
     for (const key of keys) {
       if (previous[key] === undefined) delete process.env[key];

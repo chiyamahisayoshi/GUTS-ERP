@@ -27,6 +27,7 @@ export function getConfig() {
   const databasePort = Number.parseInt(process.env.DB_PORT || '3306', 10);
   const connectionLimit = Number.parseInt(process.env.DB_POOL_SIZE || '10', 10);
   const jwtTtlSeconds = Number.parseInt(process.env.JWT_TTL_SECONDS || '3600', 10);
+  const refreshTtlSeconds = 30 * 24 * 60 * 60;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be between 1 and 65535');
   if (!Number.isInteger(databasePort) || databasePort < 1 || databasePort > 65535) {
     throw new Error('DB_PORT must be between 1 and 65535');
@@ -55,7 +56,8 @@ export function getConfig() {
       secret: jwtSecret,
       issuer: process.env.JWT_ISSUER || 'guts-erp',
       audience: process.env.JWT_AUDIENCE || 'guts-erp',
-      expiresIn: jwtTtlSeconds
+      expiresIn: jwtTtlSeconds,
+      refreshExpiresIn: refreshTtlSeconds
     }
   };
 }
