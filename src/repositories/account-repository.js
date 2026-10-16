@@ -25,6 +25,19 @@ export function createAccountRepository(db) {
       return rows[0] || null;
     },
 
+    async findActiveBySiteId(siteId) {
+      const rows = await db.query(
+        `SELECT a.id, a.site_id, a.username, a.display_name, a.status, a.is_owner_admin,
+                s.code AS site_code, s.name AS site_name, s.type AS site_type,
+                s.status AS site_status
+           FROM accounts a JOIN sites s ON s.id = a.site_id
+          WHERE a.site_id = ? AND a.status = 'active' AND s.status = 'active'
+          ORDER BY a.id LIMIT 1`,
+        [siteId]
+      );
+      return rows[0] || null;
+    },
+
     async listPermissions(id) {
       const rows = await db.query(
         `SELECT permission_key FROM role_permissions rp

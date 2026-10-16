@@ -1,8 +1,15 @@
 import { mountParkingInspection } from './parking-inspection3d.js';
 import { translateText, type Language } from './i18n.js';
 import { pageFromHash as parsePageFromHash, pageHash } from './page-state.js';
+import {
+  beginSiteSession, clearSession, isImpersonating, restoreAdminSession,
+  SESSION_TOKEN_KEY
+} from './session-state.js';
 
-type Site = { id: string; code: string; name: string; type: string; status: string };
+type Site = {
+  id: string; code: string; name: string; type: string; status: string;
+  has_active_account?: boolean | number;
+};
 type Account = {
   id: string; site_id: string; username: string; display_name: string; status: string;
   site_code: string; site_name: string; role_ids: unknown; permissions: unknown;
@@ -202,9 +209,10 @@ const humanError = (code: string) => ({
   not_found: '対象の情報が見つかりません。'
 }[code] ?? '操作を完了できませんでした。時間をおいて再度お試しください。');
 
-let token = sessionStorage.getItem('guts_erp_token') || '';
+let token = sessionStorage.getItem(SESSION_TOKEN_KEY) || '';
 let profile: Profile | null = null;
 let language: Language = 'ja';
+let restoringAdminSession = false;
 const PAGE_STORAGE_KEY = 'guts_erp_current_page';
 const appPages: Page[] = ['dashboard', 'reservations', 'sites', 'accounts', 'vehicles', 'parking'];
 function pageFromHash(): Page | null {
@@ -281,9 +289,20 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (options.body) headers.set('Content-Type', 'application/json');
   const response = await fetch(path, { ...options, headers });
   if (response.status === 401 && token) {
+    const originalAdminSession = restoreAdminSession(sessionStorage);
+    if (originalAdminSession && originalAdminSession.token !== token) {
+      token = originalAdminSession.token;
+      restoringAdminSession = true;
+      const originalPage = originalAdminSession.page;
+      if (appPages.includes(originalPage as Page)) {
+        history.replaceState(null, '', pageHash(originalPage as Page));
+      }
+      window.location.reload();
+      throw new Error('unauthorized');
+    }
     token = '';
     profile = null;
-    sessionStorage.removeItem('guts_erp_token');
+    clearSession(sessionStorage);
     renderLogin();
     throw new Error('unauthorized');
   }
@@ -399,7 +418,8 @@ function renderLogin() {
         })
       });
       token = result.accessToken;
-      sessionStorage.setItem('guts_erp_token', token);
+      clearSession(sessionStorage);
+      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
       await loadProfile();
     } catch (error) {
       toast(humanError((error as Error).message), true);
@@ -471,7 +491,7 @@ function renderShell() {
       </div>
     </aside>
     <main class="main">
-      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions">${profile.isAdmin ? `<div class="language-switch" role="group" aria-label="言語切替"><button class="btn btn-sm${language === 'ja' ? ' active' : ''}" data-language="ja" aria-pressed="${language === 'ja'}">日本語</button><button class="btn btn-sm${language === 'zh' ? ' active' : ''}" data-language="zh" aria-pressed="${language === 'zh'}">中文</button></div>` : ''}<span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
+      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions">${isImpersonating(sessionStorage) && !profile.isAdmin ? '<button class="btn btn-sm btn-primary" data-action="return-admin">管理アカウントに戻る</button>' : ''}${profile.isAdmin ? `<div class="language-switch" role="group" aria-label="言語切替"><button class="btn btn-sm${language === 'ja' ? ' active' : ''}" data-language="ja" aria-pressed="${language === 'ja'}">日本語</button><button class="btn btn-sm${language === 'zh' ? ' active' : ''}" data-language="zh" aria-pressed="${language === 'zh'}">中文</button></div>` : ''}<span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
       <section class="content" id="page-content"><div class="empty">読み込み中…</div></section>
     </main>
   </div>`);
@@ -529,10 +549,12 @@ function statCard(title: string, number: number, foot: string, iconName: string,
   return `<article class="stat-card"><div class="stat-top">${title}<span class="stat-icon ${tone}">${icon(iconName)}</span></div><div class="stat-number">${number.toLocaleString(locale)}</div><div class="stat-foot">${foot}</div></article>`;
 }
 async function renderDashboard() {
+  const reservationParams = new URLSearchParams({ limit: '6' });
+  if (profile!.site.type === 'headquarters') reservationParams.set('siteId', profile!.site.id);
   const [stats, sitesData, reservationsData] = await Promise.all([
     api<Stats>('/api/v1/dashboard/stats'),
     can('sites:read') ? api<{ items: Site[] }>('/api/v1/sites') : Promise.resolve({ items: [] as Site[] }),
-    can('reservations:read') ? api<{ items: Reservation[] }>('/api/v1/reservations?limit=6') : Promise.resolve({ items: [] as Reservation[] })
+    can('reservations:read') ? api<{ items: Reservation[] }>(`/api/v1/reservations?${reservationParams}`) : Promise.resolve({ items: [] as Reservation[] })
   ]);
   cachedSites = sitesData.items;
   const upcoming = reservationsData.items.slice(0, 5);
@@ -580,7 +602,13 @@ async function renderSites() {
   const result = await api<{ items: Site[] }>('/api/v1/sites');
   cachedSites = result.items;
   const items = result.items.filter((item) => `${item.name} ${item.code} ${label(item.type)}`.toLowerCase().includes(query.toLowerCase()));
-  const rows = items.map((item) => `<tr><td class="primary-cell" data-label="店舗">${text(item.name)}<span class="secondary">${text(item.code)}</span></td><td data-label="種別">${badge(item.type)}</td><td data-label="状態">${badge(item.status)}</td><td data-label="操作">${can('sites:write') ? '<span class="secondary">—</span>' : ''}</td></tr>`).join('');
+  const rows = items.map((item) => {
+    const switchButton = profile!.isAdmin && item.type !== 'headquarters' &&
+      item.status === 'active' && Number(item.has_active_account) === 1
+      ? `<button class="btn btn-sm" data-action="switch-site" data-id="${text(item.id)}">ログイン</button>`
+      : '';
+    return `<tr><td class="primary-cell" data-label="店舗">${text(item.name)}<span class="secondary">${text(item.code)}</span></td><td data-label="種別">${badge(item.type)}</td><td data-label="状態">${badge(item.status)}</td><td data-label="操作">${switchButton || (can('sites:write') ? '<span class="secondary">—</span>' : '')}</td></tr>`;
+  }).join('');
   setContent(`${pageHead('店舗管理', '本部・直営店・加盟店を管理', can('sites:write') && profile!.site.type === 'headquarters' ? `<button class="btn btn-primary" data-modal="site">${icon('plus')} 店舗を追加</button>` : '')}
     ${renderToolbar('店舗名または店舗コードで検索')}
     ${pageTable(['店舗名 / コード', '店舗種別', '状態', '操作'], rows, '店舗が見つかりません')}`);
@@ -637,6 +665,7 @@ function permissionChecks(selected: string[] = []) {
 async function renderVehicles() {
   if (can('sites:read')) await loadSitesIfMissing();
   const params = new URLSearchParams({ limit: '50', offset: String(offset) });
+  if (profile!.site.type === 'headquarters') params.set('siteId', profile!.site.id);
   if (statusFilter) params.set('status', statusFilter);
   if (query) params.set('search', query);
   const result = await api<{ items: Vehicle[] }>(`/api/v1/vehicles?${params}`);
@@ -954,6 +983,7 @@ async function renderParkingBoard() {
 }
 async function renderReservations() {
   const params = new URLSearchParams({ limit: '50', offset: String(offset) });
+  if (profile!.site.type === 'headquarters') params.set('siteId', profile!.site.id);
   if (statusFilter) params.set('status', statusFilter);
   if (query) params.set('search', query);
   const result = await api<{ items: Reservation[] }>(`/api/v1/reservations?${params}`);
@@ -1082,6 +1112,53 @@ function closeModal() {
   modal = '';
   pendingReservationTransition = null;
 }
+function closeParkingRealtime() {
+  window.clearTimeout(parkingReconnectTimer);
+  parkingSocket?.close();
+  parkingSocket = null;
+}
+async function switchToSite(siteId: string) {
+  if (!profile?.isAdmin) return;
+  const previousPage = currentPage;
+  const session = await api<{ accessToken: string }>('/api/v1/auth/switch-site', {
+    method: 'POST', body: JSON.stringify({ siteId })
+  });
+  closeParkingRealtime();
+  closeParkingInspection();
+  clearSiteData();
+  beginSiteSession(sessionStorage, token, previousPage, session.accessToken);
+  token = session.accessToken;
+  profile = null;
+  currentPage = 'dashboard';
+  localStorage.setItem(PAGE_STORAGE_KEY, currentPage);
+  history.replaceState(null, '', pageHash(currentPage));
+  await loadProfile();
+}
+async function returnToManagementAccount() {
+  const adminSession = restoreAdminSession(sessionStorage);
+  if (!adminSession) return;
+  closeParkingRealtime();
+  closeParkingInspection();
+  clearSiteData();
+  token = adminSession.token;
+  const originalPage = adminSession.page;
+  if (appPages.includes(originalPage as Page)) {
+    currentPage = originalPage as Page;
+    localStorage.setItem(PAGE_STORAGE_KEY, currentPage);
+    history.replaceState(null, '', pageHash(currentPage));
+  }
+  profile = null;
+  await loadProfile();
+}
+function clearSiteData() {
+  cachedSites = [];
+  cachedPermissions = [];
+  currentEmployees = [];
+  currentReservations = [];
+  currentAccounts = [];
+  currentVehicles = [];
+  currentParkingBoard = null;
+}
 function vehicleErpBasicFields() {
   return `<div class="assessment-field"><span>メーカー</span><div class="assessment-field-control">
       <input name="make" type="text" maxlength="80" required aria-label="メーカー"></div></div>
@@ -1153,10 +1230,10 @@ function vehicleParkingFields(catalog: ParkingVehicleCatalog | null, loading = f
   const catalogNotice = preview
     ? `<p class="vehicle-catalog-message" role="${loading || error ? 'status' : 'note'}">${
       error
-        ? '駐車場設定を読み込めませんでした。店舗を確認して再試行してください。'
+        ? '駐車場設定を読み込めませんでした。店舗の設定を確認して再試行してください。'
         : loading
           ? '駐車場設定を読み込んでいます…'
-          : '店舗を選択すると、その店舗の設定を読み込みます。項目の内容はParkingの標準構成です。'
+          : '登録先の店舗の駐車場設定を読み込みます。'
     }${error ? ' <button class="btn btn-sm" type="button" data-action="vehicle-catalog-retry">再試行</button>' : ''}</p>`
     : '';
   return `<div class="vehicle-parking-form">
@@ -1354,20 +1431,10 @@ async function openModal(which: string, id = '') {
         ${field('name', 'スタッフ名', 'text', employee.name, '氏名を入力', true)}
       `, 'employee-edit');
     } else if (which === 'vehicle') {
-      const isHeadquarters = profile!.site.type === 'headquarters';
-      if (isHeadquarters) await loadSitesIfMissing();
       const canManageParking = can('parking:read') && can('parking:write');
-      const parking = canManageParking && !isHeadquarters
+      const parking = canManageParking
         ? await api<ParkingVehicleCatalog>('/api/v1/parking/vehicle-catalog') : null;
-      const selectableSites = cachedSites.filter((site) =>
-        site.type !== 'headquarters' && site.status === 'active'
-      );
-      const initialSiteId = isHeadquarters && selectableSites.length === 1
-        ? selectableSites[0].id : '';
-      const siteField = isHeadquarters
-        ? `<div class="field"><label for="f-siteId">所属店舗</label><select id="f-siteId" name="siteId" data-vehicle-site required>
-          <option value="">店舗を選択してください</option>${siteOptions(initialSiteId)}</select></div>`
-        : `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
+      const siteField = `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
       vehicleCreateInspectionMarks = [];
       vehicleCreateDamageTypes = parking?.damage_types ?? [];
       modalTemplate('車両を追加', '車両情報と駐車場情報を登録します', `<div class="vehicle-create-content">
@@ -1379,20 +1446,12 @@ async function openModal(which: string, id = '') {
       </div>`, 'vehicle');
       const parkingFields = $('[data-vehicle-parking-fields]');
       if (parkingFields && parking) renderVehicleParkingCatalog(parkingFields, parking);
-      else if (parkingFields && isHeadquarters) {
-        const siteSelect = $('[data-vehicle-site]');
-        if (initialSiteId && siteSelect instanceof HTMLSelectElement) {
-          await loadVehicleParkingCatalog(parkingFields, initialSiteId, siteSelect);
-        } else {
-          renderVehicleParkingCatalog(parkingFields, null);
-        }
-      }
     } else if (which === 'edit-vehicle') {
       const vehicle = currentVehicles.find((item) => item.id === id);
       if (!vehicle) throw new Error('not_found');
       if (profile!.site.type === 'headquarters') await loadSitesIfMissing();
       const siteField = profile!.site.type === 'headquarters'
-        ? selectField('siteId', '所属店舗', siteOptions(vehicle.site_id))
+        ? selectField('siteId', '所属店舗', siteOptions(vehicle.site_id, true))
         : `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`;
       modalTemplate('車両情報を編集', `${text(vehicle.registration_number)} · 固定車両IDは変更されません`, `<input type="hidden" name="id" value="${text(vehicle.id)}"><div class="form-grid">
         ${field('registrationNumber', 'ナンバープレート', 'text', vehicle.registration_number, '', true)}
@@ -1404,16 +1463,15 @@ async function openModal(which: string, id = '') {
         ${selectField('status', '車両の状態', ['available','rented','maintenance','retired'].map((status) => `<option value="${status}" ${vehicle.status === status ? 'selected' : ''}>${label(status)}</option>`).join(''))}
       </div>`, 'edit-vehicle');
     } else if (which === 'reservation') {
-      await loadSitesIfMissing();
       const defaultStart = new Date(Date.now() + 30 * 60_000);
       const defaultEnd = new Date(defaultStart.getTime() + 24 * 60 * 60_000);
       const localDate = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-      const bookingSite = profile!.site.type === 'headquarters' ? '' : profile!.site.id;
-      const scope = bookingSite ? `&siteId=${encodeURIComponent(bookingSite)}` : '';
+      const bookingSite = profile!.site.id;
+      const scope = `&siteId=${encodeURIComponent(bookingSite)}`;
       const vehicles = await api<{ items: Vehicle[] }>(`/api/v1/vehicles?status=available&limit=100${scope}`);
       const vehicleOptions = vehicles.items.map((vehicle) => `<option value="${text(vehicle.id)}">${text(vehicle.registration_number)} · ${text(vehicle.make)} ${text(vehicle.model)}</option>`).join('');
       const siteField = profile!.site.type === 'headquarters'
-        ? `<div class="field"><label for="f-siteId">受付店舗</label><select id="f-siteId" name="siteId" data-reservation-site required><option value="">店舗を選択してください</option>${siteOptions()}</select></div>`
+        ? `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`
         : '';
       modalTemplate('予約を作成', 'お客様と利用期間を登録します', `<div class="form-grid">
         ${field('guestName', 'お客様の氏名', 'text', '', '氏名を入力してください', true)}
@@ -1914,9 +1972,10 @@ async function handleClick(event: MouseEvent) {
   if (retryCatalogButton) {
     const form = retryCatalogButton.closest<HTMLFormElement>('form');
     const siteSelect = form?.querySelector<HTMLSelectElement>('[data-vehicle-site]');
+    const siteId = siteSelect?.value || form?.querySelector<HTMLInputElement>('[name="siteId"]')?.value;
     const fields = form?.querySelector<HTMLElement>('[data-vehicle-parking-fields]');
-    if (siteSelect?.value && fields) {
-      await loadVehicleParkingCatalog(fields, siteSelect.value, siteSelect);
+    if (siteId && fields) {
+      await loadVehicleParkingCatalog(fields, siteId, siteSelect ?? undefined);
     }
     return;
   }
@@ -2019,10 +2078,24 @@ async function handleClick(event: MouseEvent) {
     closeModal();
   } else if (target.dataset.action === 'logout') {
     closeParkingInspection();
-    window.clearTimeout(parkingReconnectTimer);
-    parkingSocket?.close();
-    parkingSocket = null;
-    token = ''; profile = null; sessionStorage.removeItem('guts_erp_token'); renderLogin();
+    closeParkingRealtime();
+    token = ''; profile = null;
+    clearSession(sessionStorage);
+    renderLogin();
+  } else if (target.dataset.action === 'switch-site') {
+    target.setAttribute('disabled', 'true');
+    try {
+      await switchToSite(target.dataset.id!);
+    } catch (error) {
+      toast(humanError((error as Error).message), true);
+      target.removeAttribute('disabled');
+    }
+  } else if (target.dataset.action === 'return-admin') {
+    try {
+      await returnToManagementAccount();
+    } catch (error) {
+      toast(humanError((error as Error).message), true);
+    }
   } else if (target.dataset.action === 'parking-location-manager') {
     openParkingLocations();
   } else if (target.dataset.action === 'parking-settings') {
@@ -2310,6 +2383,9 @@ window.addEventListener('hashchange', () => {
 
 if (token) {
   loadProfile().catch(() => {
-    token = ''; profile = null; sessionStorage.removeItem('guts_erp_token'); renderLogin();
+    if (restoringAdminSession) return;
+    token = ''; profile = null;
+    clearSession(sessionStorage);
+    renderLogin();
   });
 } else renderLogin();

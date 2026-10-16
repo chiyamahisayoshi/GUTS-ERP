@@ -33,10 +33,17 @@ async function makeApp(user) {
       audience: jwtConfig.audience
     }
   });
+  const accountsById = new Map([
+    ...(user.profile ? [[String(user.profile.id), user.profile]] : []),
+    ...Object.entries(user.accounts ?? {})
+  ]);
+  const permissionsByAccount = user.accountPermissions ?? {};
   registerRoutes(app, {
     accounts: {
-      findById: async () => user.profile ?? null,
-      listPermissions: async () => []
+      findById: async (id) => accountsById.get(String(id)) ?? null,
+      findActiveBySiteId: async (siteId) =>
+        user.siteAccount?.site_id === String(siteId) ? user.siteAccount : null,
+      listPermissions: async (id) => permissionsByAccount[String(id)] ?? []
     },
     admin: {
       listSites: async (siteId) => siteId
@@ -95,7 +102,25 @@ async function makeApp(user) {
         return { id: employee.id, status: employee.status ?? 'updated' };
       }
     },
-    auth: { login: async () => null },
+    auth: {
+      login: async () => null,
+      switchToSite: async (siteId) => {
+        const account = user.siteAccount;
+        if (!account || account.site_id !== String(siteId) || account.status !== 'active' ||
+            account.site_status !== 'active' || account.site_type === 'headquarters' ||
+            Number(account.is_owner_admin) === 1) return null;
+        const permissions = permissionsByAccount[String(account.id)] ?? [];
+        return {
+          accessToken: app.jwt.sign({
+            sub: String(account.id), username: account.username,
+            siteId: String(account.site_id), siteCode: account.site_code,
+            siteType: account.site_type, permissions
+          }, {
+            issuer: jwtConfig.issuer, audience: jwtConfig.audience, expiresIn: 300
+          })
+        };
+      }
+    },
     parkingBoard: {
       bootstrap: async (siteId) => {
         calls.parkingBootstrapSiteScope = siteId;
@@ -198,6 +223,67 @@ test('auth profile does not grant the owner-admin marker to regular accounts', a
   assert.equal(response.json().isAdmin, false);
 });
 
+test('only the owner admin can switch to a site account and the issued token is site-scoped', async (t) => {
+  const storeAccount = {
+    id: '14', username: 'tokyo', display_name: 'Tokyo', is_owner_admin: 0,
+    site_id: '2', site_code: 'TOKYO', site_name: 'Tokyo', site_type: 'direct',
+    status: 'active', site_status: 'active'
+  };
+  const owner = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters',
+    permissions: ['accounts:write', 'vehicles:read', 'vehicles:write'],
+    profile: {
+      id: '1', is_owner_admin: 1, status: 'active', site_status: 'active',
+      site_id: '1', site_type: 'headquarters'
+    },
+    siteAccount: storeAccount,
+    accounts: { '14': storeAccount },
+    accountPermissions: { '14': ['vehicles:read'] }
+  });
+  t.after(() => owner.app.close());
+
+  const headers = { authorization: `Bearer ${owner.token}` };
+  const switched = await owner.app.inject({
+    method: 'POST', url: '/api/v1/auth/switch-site', headers,
+    payload: { siteId: '2' }
+  });
+  assert.equal(switched.statusCode, 200);
+  const storeHeaders = { authorization: `Bearer ${switched.json().accessToken}` };
+  const profile = await owner.app.inject({
+    method: 'GET', url: '/api/v1/auth/me', headers: storeHeaders
+  });
+  assert.equal(profile.statusCode, 200);
+  assert.equal(profile.json().isAdmin, false);
+  assert.deepEqual(profile.json().permissions, ['vehicles:read']);
+
+  const vehicles = await owner.app.inject({
+    method: 'GET', url: '/api/v1/vehicles?siteId=99', headers: storeHeaders
+  });
+  assert.equal(vehicles.statusCode, 200);
+  assert.equal(owner.calls.vehicleList.siteId, '2');
+
+  const accounts = await owner.app.inject({
+    method: 'GET', url: '/api/v1/accounts', headers: storeHeaders
+  });
+  assert.equal(accounts.statusCode, 403);
+
+  const regular = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct', permissions: [],
+    profile: {
+      id: '14', is_owner_admin: 0, status: 'active', site_status: 'active',
+      site_id: '2', site_type: 'direct'
+    },
+    siteAccount: storeAccount
+  });
+  t.after(() => regular.app.close());
+  const denied = await regular.app.inject({
+    method: 'POST', url: '/api/v1/auth/switch-site',
+    headers: { authorization: `Bearer ${regular.token}` },
+    payload: { siteId: '2' }
+  });
+  assert.equal(denied.statusCode, 403);
+});
+
 test('store users cannot query vehicles outside their own site', async (t) => {
   const { app, token, calls } = await makeApp({
     sub: '14',
@@ -240,6 +326,21 @@ test('store users receive ERP-issued vehicle IDs and cannot assign another site'
   assert.equal(response.statusCode, 201);
   assert.equal(calls.createdVehicle.siteId, '2');
   assert.match(calls.createdVehicle.id, /^[0-9a-f-]{36}$/);
+});
+
+test('headquarters vehicle creation defaults to the administrator home site', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['vehicles:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST', url: '/api/v1/vehicles',
+    headers: { authorization: `Bearer ${token}` },
+    payload: { registrationNumber: '品川500あ1234', make: 'Toyota', model: 'Aqua' }
+  });
+  assert.equal(response.statusCode, 201);
+  assert.equal(calls.createdVehicle.siteId, '1');
 });
 
 test('parking class selection creates the ERP vehicle and scopes its parking link to the selected site', async (t) => {
@@ -462,6 +563,26 @@ test('reservation endpoints scope reception staff to their own site', async (t) 
   assert.equal(calls.dashboardSiteScope, '2');
 });
 
+test('headquarters reservation creation defaults to the administrator home site', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['reservations:write']
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST', url: '/api/v1/reservations',
+    headers: { authorization: `Bearer ${token}` },
+    payload: {
+      guestName: 'Guest', guestPhone: '+81-90-1234-5678',
+      startAt: '2026-11-01T09:00:00.000Z', endAt: '2026-11-02T09:00:00.000Z',
+      vehicleId: '6a2b2f73-9ca4-4ed0-9b53-1ab25e2f3b55'
+    }
+  });
+  assert.equal(response.statusCode, 201);
+  assert.equal(calls.createdReservation.siteId, '1');
+  assert.equal(calls.createdReservation.createdBy, '1');
+});
+
 test('parking sync requires headquarters vehicle read and write permissions', async (t) => {
   const { app, token, calls } = await makeApp({
     sub: '1', siteId: '1', siteType: 'headquarters',
@@ -515,6 +636,12 @@ test('parking vehicle catalog uses selected ERP site only for headquarters accou
     sub: '1', siteId: '1', siteType: 'headquarters', permissions: ['parking:read']
   });
   t.after(() => headquarters.app.close());
+  const homeCatalog = await headquarters.app.inject({
+    method: 'GET', url: '/api/v1/parking/vehicle-catalog',
+    headers: { authorization: ['Bearer', headquarters.token].join(' ') }
+  });
+  assert.equal(homeCatalog.statusCode, 200);
+  assert.equal(headquarters.calls.parkingVehicleCatalogSiteScope, '1');
   const headquartersResponse = await headquarters.app.inject({
     method: 'GET', url: '/api/v1/parking/vehicle-catalog?siteId=2',
     headers: { authorization: ['Bearer', headquarters.token].join(' ') }

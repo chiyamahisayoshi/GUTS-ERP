@@ -65,12 +65,18 @@ export function createAdminRepository(db) {
     async listSites(siteId) {
       if (siteId) {
         return db.query(
-          'SELECT id, code, name, type, status FROM sites WHERE id = ? ORDER BY id',
+          `SELECT s.id, s.code, s.name, s.type, s.status,
+                  EXISTS(SELECT 1 FROM accounts a WHERE a.site_id = s.id AND a.status = 'active')
+                    AS has_active_account
+             FROM sites s WHERE s.id = ? ORDER BY s.id`,
           [siteId]
         );
       }
       return db.query(
-        'SELECT id, code, name, type, status FROM sites ORDER BY id'
+        `SELECT s.id, s.code, s.name, s.type, s.status,
+                EXISTS(SELECT 1 FROM accounts a WHERE a.site_id = s.id AND a.status = 'active')
+                  AS has_active_account
+           FROM sites s ORDER BY s.id`
       );
     },
 
