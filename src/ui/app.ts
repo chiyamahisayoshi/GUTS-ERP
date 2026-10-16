@@ -209,10 +209,9 @@ const humanError = (code: string) => ({
   not_found: '対象の情報が見つかりません。'
 }[code] ?? '操作を完了できませんでした。時間をおいて再度お試しください。');
 
-let token = sessionStorage.getItem(SESSION_TOKEN_KEY) || '';
+let token = localStorage.getItem(SESSION_TOKEN_KEY) || '';
 let profile: Profile | null = null;
 let language: Language = 'ja';
-let restoringAdminSession = false;
 const PAGE_STORAGE_KEY = 'guts_erp_current_page';
 const appPages: Page[] = ['dashboard', 'reservations', 'sites', 'accounts', 'vehicles', 'parking'];
 function pageFromHash(): Page | null {
@@ -287,28 +286,63 @@ async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   headers.set('Accept', 'application/json');
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (options.body) headers.set('Content-Type', 'application/json');
-  const response = await fetch(path, { ...options, headers });
+  let response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
   if (response.status === 401 && token) {
-    const originalAdminSession = restoreAdminSession(sessionStorage);
-    if (originalAdminSession && originalAdminSession.token !== token) {
-      token = originalAdminSession.token;
-      restoringAdminSession = true;
-      const originalPage = originalAdminSession.page;
-      if (appPages.includes(originalPage as Page)) {
-        history.replaceState(null, '', pageHash(originalPage as Page));
+    const authPath = path.split('?')[0];
+    if (!['/api/v1/auth/login', '/api/v1/auth/logout', '/api/v1/auth/end-site',
+      '/api/v1/auth/refresh'].includes(authPath)) {
+      const context = isImpersonating(localStorage) ? 'site' : 'default';
+      const renewed = await refreshAccessToken(context);
+      if (renewed) {
+        headers.set('Authorization', `Bearer ${renewed}`);
+        response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+      } else if (context === 'site') {
+        const ended = await fetch('/api/v1/auth/end-site', {
+          method: 'POST', credentials: 'same-origin'
+        });
+        if (!ended.ok) throw new Error('internal_error');
+        const adminSession = restoreAdminSession(localStorage);
+        if (adminSession) {
+          token = adminSession.token;
+          localStorage.setItem(SESSION_TOKEN_KEY, token);
+          if (appPages.includes(adminSession.page as Page)) {
+            history.replaceState(null, '', pageHash(adminSession.page as Page));
+          }
+          const adminToken = await refreshAccessToken('default');
+          if (adminToken) {
+            window.location.reload();
+            throw new Error('unauthorized');
+          }
+        }
       }
-      window.location.reload();
-      throw new Error('unauthorized');
     }
+  }
+  if (response.status === 401 && token) {
     token = '';
     profile = null;
-    clearSession(sessionStorage);
+    clearSession(localStorage);
     renderLogin();
     throw new Error('unauthorized');
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.message || data.error || `HTTP ${response.status}`);
   return data as T;
+}
+async function refreshAccessToken(context: 'default' | 'site'): Promise<string | null> {
+  const response = await fetch('/api/v1/auth/refresh', {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify({ context })
+  });
+  if (response.status === 401) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || typeof data.accessToken !== 'string') {
+    throw new Error(data.error || 'internal_error');
+  }
+  token = data.accessToken;
+  localStorage.setItem(SESSION_TOKEN_KEY, token);
+  return token;
 }
 function reportClientError(error: {
   type: 'error' | 'unhandledrejection' | 'resource';
@@ -418,8 +452,8 @@ function renderLogin() {
         })
       });
       token = result.accessToken;
-      clearSession(sessionStorage);
-      sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+      clearSession(localStorage);
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
       await loadProfile();
     } catch (error) {
       toast(humanError((error as Error).message), true);
@@ -491,7 +525,7 @@ function renderShell() {
       </div>
     </aside>
     <main class="main">
-      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions">${isImpersonating(sessionStorage) && !profile.isAdmin ? '<button class="btn btn-sm btn-primary" data-action="return-admin">管理アカウントに戻る</button>' : ''}${profile.isAdmin ? `<div class="language-switch" role="group" aria-label="言語切替"><button class="btn btn-sm${language === 'ja' ? ' active' : ''}" data-language="ja" aria-pressed="${language === 'ja'}">日本語</button><button class="btn btn-sm${language === 'zh' ? ' active' : ''}" data-language="zh" aria-pressed="${language === 'zh'}">中文</button></div>` : ''}<span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
+      <header class="topbar"><button class="mobile-menu" data-action="menu" aria-label="メニューを開く">☰</button><div class="crumb">GUTS ERP&nbsp; / &nbsp;<b>${titles[currentPage]}</b></div><div class="top-actions">${isImpersonating(localStorage) && !profile.isAdmin ? '<button class="btn btn-sm btn-primary" data-action="return-admin">管理アカウントに戻る</button>' : ''}${profile.isAdmin ? `<div class="language-switch" role="group" aria-label="言語切替"><button class="btn btn-sm${language === 'ja' ? ' active' : ''}" data-language="ja" aria-pressed="${language === 'ja'}">日本語</button><button class="btn btn-sm${language === 'zh' ? ' active' : ''}" data-language="zh" aria-pressed="${language === 'zh'}">中文</button></div>` : ''}<span class="live"><i></i> 正常稼働中</span><button class="btn btn-sm btn-quiet" data-action="refresh">${icon('refresh')} 更新</button><small class="app-version">v${text(appVersion)}</small></div></header>
       <section class="content" id="page-content"><div class="empty">読み込み中…</div></section>
     </main>
   </div>`);
@@ -1126,7 +1160,7 @@ async function switchToSite(siteId: string) {
   closeParkingRealtime();
   closeParkingInspection();
   clearSiteData();
-  beginSiteSession(sessionStorage, token, previousPage, session.accessToken);
+  beginSiteSession(localStorage, token, previousPage, session.accessToken);
   token = session.accessToken;
   profile = null;
   currentPage = 'dashboard';
@@ -1135,12 +1169,23 @@ async function switchToSite(siteId: string) {
   await loadProfile();
 }
 async function returnToManagementAccount() {
-  const adminSession = restoreAdminSession(sessionStorage);
+  const response = await fetch('/api/v1/auth/end-site', {
+    method: 'POST', credentials: 'same-origin'
+  });
+  if (!response.ok) throw new Error('internal_error');
+  const adminSession = restoreAdminSession(localStorage);
   if (!adminSession) return;
   closeParkingRealtime();
   closeParkingInspection();
   clearSiteData();
   token = adminSession.token;
+  const renewed = await refreshAccessToken('default');
+  if (!renewed) {
+    token = ''; profile = null;
+    clearSession(localStorage);
+    renderLogin();
+    return;
+  }
   const originalPage = adminSession.page;
   if (appPages.includes(originalPage as Page)) {
     currentPage = originalPage as Page;
@@ -2079,8 +2124,17 @@ async function handleClick(event: MouseEvent) {
   } else if (target.dataset.action === 'logout') {
     closeParkingInspection();
     closeParkingRealtime();
+    try {
+      const response = await fetch('/api/v1/auth/logout', {
+        method: 'POST', credentials: 'same-origin'
+      });
+      if (!response.ok) throw new Error('internal_error');
+    } catch {
+      toast(humanError('internal_error'), true);
+      return;
+    }
     token = ''; profile = null;
-    clearSession(sessionStorage);
+    clearSession(localStorage);
     renderLogin();
   } else if (target.dataset.action === 'switch-site') {
     target.setAttribute('disabled', 'true');
@@ -2381,11 +2435,38 @@ window.addEventListener('hashchange', () => {
   void loadPage();
 });
 
-if (token) {
-  loadProfile().catch(() => {
-    if (restoringAdminSession) return;
-    token = ''; profile = null;
-    clearSession(sessionStorage);
+async function resumeSession() {
+  try {
+    if (!token) {
+      const context = isImpersonating(localStorage) ? 'site' : 'default';
+      let renewed = await refreshAccessToken(context);
+      if (!renewed && context === 'site') {
+        const ended = await fetch('/api/v1/auth/end-site', {
+          method: 'POST', credentials: 'same-origin'
+        });
+        if (!ended.ok) throw new Error('internal_error');
+        const adminSession = restoreAdminSession(localStorage);
+        if (adminSession) {
+          token = adminSession.token;
+          renewed = await refreshAccessToken('default');
+        }
+      }
+      if (!renewed) {
+        token = ''; profile = null;
+        clearSession(localStorage);
+        renderLogin();
+        return;
+      }
+    }
+    await loadProfile();
+  } catch (error) {
+    if ((error as Error).message === 'unauthorized') {
+      token = ''; profile = null;
+      clearSession(localStorage);
+    } else {
+      toast(humanError((error as Error).message), true);
+    }
     renderLogin();
-  });
-} else renderLogin();
+  }
+}
+void resumeSession();

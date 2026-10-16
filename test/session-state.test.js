@@ -5,7 +5,7 @@ import {
   SESSION_TOKEN_KEY, ORIGINAL_ADMIN_TOKEN_KEY, ORIGINAL_ADMIN_PAGE_KEY
 } from '../src/ui/session-state.js';
 
-function createSessionStorage(backing = new Map()) {
+function createPersistentStorage(backing = new Map()) {
   return {
     backing,
     getItem(key) { return backing.get(key) ?? null; },
@@ -14,13 +14,13 @@ function createSessionStorage(backing = new Map()) {
   };
 }
 
-test('site session switching survives reload and restores the admin token and page', () => {
-  const storage = createSessionStorage();
+test('persisted site session restores the administrator token and page after reload', () => {
+  const storage = createPersistentStorage();
   beginSiteSession(storage, 'admin-token', 'sites', 'store-token');
   assert.equal(storage.getItem(SESSION_TOKEN_KEY), 'store-token');
   assert.equal(isImpersonating(storage), true);
 
-  const reloadedStorage = createSessionStorage(storage.backing);
+  const reloadedStorage = createPersistentStorage(storage.backing);
   assert.deepEqual(restoreAdminSession(reloadedStorage), {
     token: 'admin-token', page: 'sites'
   });
@@ -31,7 +31,7 @@ test('site session switching survives reload and restores the admin token and pa
 });
 
 test('logout clears both impersonated and saved administrator sessions', () => {
-  const storage = createSessionStorage();
+  const storage = createPersistentStorage();
   beginSiteSession(storage, 'admin-token', 'sites', 'store-token');
   clearSession(storage);
   assert.equal(storage.getItem(SESSION_TOKEN_KEY), null);

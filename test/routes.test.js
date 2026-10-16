@@ -20,7 +20,7 @@ async function makeApp(user) {
     parkingBootstrapSiteScope: null, parkingVehicleCatalogSiteScope: null, parkingUpdate: null,
     parkingJobCreate: null, parkingJobUpdate: null, parkingJobDelete: null, parkingPublished: [],
     parkingLotCreate: null, parkingLotUpdate: null, parkingLotDelete: null, parkingLotOrder: null,
-    parkingCatalogWrites: [], parkingLogisticsWrites: []
+    parkingCatalogWrites: [], parkingLogisticsWrites: [], revokedRefreshTokens: []
   };
   const loggedErrors = [];
   const app = Fastify({ logger: false });
@@ -103,7 +103,10 @@ async function makeApp(user) {
       }
     },
     auth: {
+      refreshExpiresIn: 2592000,
       login: async () => null,
+      refresh: async () => null,
+      revoke: async (refreshToken) => calls.revokedRefreshTokens.push(refreshToken),
       switchToSite: async (siteId) => {
         const account = user.siteAccount;
         if (!account || account.site_id !== String(siteId) || account.status !== 'active' ||
@@ -117,9 +120,11 @@ async function makeApp(user) {
             siteType: account.site_type, permissions
           }, {
             issuer: jwtConfig.issuer, audience: jwtConfig.audience, expiresIn: 300
-          })
+          }),
+          refreshToken: 'S'.repeat(43)
         };
-      }
+      },
+      ...(user.auth ?? {})
     },
     parkingBoard: {
       bootstrap: async (siteId) => {
@@ -248,6 +253,8 @@ test('only the owner admin can switch to a site account and the issued token is 
     payload: { siteId: '2' }
   });
   assert.equal(switched.statusCode, 200);
+  assert.equal(switched.json().refreshToken, undefined);
+  assert.match(switched.headers['set-cookie'], /guts_erp_site_refresh=S{43}; HttpOnly; SameSite=Strict/);
   const storeHeaders = { authorization: `Bearer ${switched.json().accessToken}` };
   const profile = await owner.app.inject({
     method: 'GET', url: '/api/v1/auth/me', headers: storeHeaders
@@ -282,6 +289,114 @@ test('only the owner admin can switch to a site account and the issued token is 
     payload: { siteId: '2' }
   });
   assert.equal(denied.statusCode, 403);
+});
+
+test('refresh rotates the selected HttpOnly cookie without exposing its token', async (t) => {
+  const received = [];
+  const { app } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: [],
+    auth: {
+      refresh: async (refreshToken) => {
+        received.push(refreshToken);
+        return {
+          accessToken: 'renewed-access-token',
+          refreshToken: 'N'.repeat(43),
+          tokenType: 'Bearer',
+          expiresIn: 3600
+        };
+      }
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/refresh',
+    headers: { cookie: `guts_erp_refresh=${'O'.repeat(43)}` },
+    payload: { context: 'default' }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(received, ['O'.repeat(43)]);
+  assert.deepEqual(response.json(), {
+    accessToken: 'renewed-access-token', tokenType: 'Bearer', expiresIn: 3600
+  });
+  assert.match(response.headers['set-cookie'], /guts_erp_refresh=N{43}; HttpOnly; SameSite=Strict/);
+  assert.match(response.headers['set-cookie'], /Max-Age=2592000/);
+  assert.equal(response.headers['cache-control'], 'no-store');
+});
+
+test('login stores refresh credentials only in an HttpOnly cookie', async (t) => {
+  const { app, calls } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: [],
+    auth: {
+      login: async () => ({
+        accessToken: 'login-access-token',
+        refreshToken: 'L'.repeat(43),
+        tokenType: 'Bearer',
+        expiresIn: 3600,
+        account: { id: '1' }
+      })
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/login',
+    headers: {
+      cookie: `guts_erp_refresh=${'A'.repeat(43)}; guts_erp_site_refresh=${'B'.repeat(43)}`
+    },
+    payload: { username: 'owner', password: 'password' }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().refreshToken, undefined);
+  assert.deepEqual(calls.revokedRefreshTokens, ['A'.repeat(43), 'B'.repeat(43)]);
+  assert.match(response.headers['set-cookie'], /guts_erp_refresh=L{43}; HttpOnly; SameSite=Strict/);
+  assert.equal(response.headers['cache-control'], 'no-store');
+});
+
+test('invalid refresh cookie is rejected and cleared', async (t) => {
+  const received = [];
+  const { app } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: [],
+    auth: {
+      refresh: async (refreshToken) => {
+        received.push(refreshToken);
+        return null;
+      }
+    }
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/refresh',
+    headers: { cookie: `guts_erp_site_refresh=${'X'.repeat(43)}` },
+    payload: { context: 'site' }
+  });
+  assert.equal(response.statusCode, 401);
+  assert.deepEqual(received, ['X'.repeat(43)]);
+  assert.match(response.headers['set-cookie'], /guts_erp_site_refresh=; HttpOnly; SameSite=Strict; Path=\/api\/v1\/auth; Max-Age=0/);
+});
+
+test('logout revokes both refresh sessions and clears both cookies', async (t) => {
+  const { app, calls } = await makeApp({
+    sub: '1', siteId: '1', siteType: 'headquarters', permissions: []
+  });
+  t.after(() => app.close());
+
+  const response = await app.inject({
+    method: 'POST',
+    url: '/api/v1/auth/logout',
+    headers: {
+      cookie: `guts_erp_refresh=${'A'.repeat(43)}; guts_erp_site_refresh=${'B'.repeat(43)}`
+    }
+  });
+  assert.equal(response.statusCode, 204);
+  assert.deepEqual(calls.revokedRefreshTokens, ['A'.repeat(43), 'B'.repeat(43)]);
+  assert.equal(response.headers['set-cookie'].length, 2);
+  assert.ok(response.headers['set-cookie'].every((cookie) =>
+    cookie.includes('HttpOnly') && cookie.includes('Max-Age=0')));
 });
 
 test('store users cannot query vehicles outside their own site', async (t) => {

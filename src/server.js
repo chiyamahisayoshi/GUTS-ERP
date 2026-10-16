@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { createPool } from './db/pool.js';
 import { createMysqlRepository } from './repositories/mysql-repository.js';
 import { createAccountRepository } from './repositories/account-repository.js';
+import { createAuthSessionRepository } from './repositories/auth-session-repository.js';
 import { createAdminRepository } from './repositories/admin-repository.js';
 import { createVehicleRepository } from './repositories/vehicle-repository.js';
 import { createReservationRepository } from './repositories/reservation-repository.js';
@@ -129,12 +130,13 @@ export async function buildApp({ config = getConfig(), pool, logger = true, erro
   const mysqlPool = pool || createPool(config.database);
   const db = createMysqlRepository(mysqlPool);
   const accounts = createAccountRepository(db);
+  const authSessions = createAuthSessionRepository(db);
   const admin = createAdminRepository(db);
   const parkingBoard = createParkingRepository(db);
   const vehicles = createVehicleRepository(db, parkingBoard);
   const reservations = createReservationRepository(db);
   const employees = createEmployeeRepository(db);
-  const auth = createAuthService({ accounts, jwt: app.jwt, config });
+  const auth = createAuthService({ accounts, sessions: authSessions, jwt: app.jwt, config });
   registerRoutes(app, {
     accounts, admin, vehicles, reservations, employees, auth, parkingBoard, parkingRealtime
   }, errors, () => mysqlPool.execute('SELECT 1'));

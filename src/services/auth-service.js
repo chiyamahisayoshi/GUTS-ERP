@@ -1,10 +1,16 @@
 import bcrypt from 'bcryptjs';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 const DUMMY_HASH = '$2b$12$abcdefghijklmnopqrstuuWqjL3sY8vx5ujL7YY9v0U8kBH8n0mQy';
 
-export function createAuthService({ accounts, jwt, config }) {
-  function createSession(account, permissions) {
-    const token = jwt.sign({
+export function createAuthService({ accounts, sessions, jwt, config }) {
+  const tokenHash = (token) => createHash('sha256').update(token).digest('hex');
+  const refreshExpiry = () => new Date(
+    Date.now() + config.jwt.refreshExpiresIn * 1000
+  ).toISOString().slice(0, 23).replace('T', ' ');
+
+  function createAccessToken(account, permissions) {
+    return jwt.sign({
       sub: String(account.id),
       username: account.username,
       siteId: String(account.site_id),
@@ -16,8 +22,19 @@ export function createAuthService({ accounts, jwt, config }) {
       audience: config.jwt.audience,
       expiresIn: config.jwt.expiresIn
     });
+  }
+
+  async function createSession(account, permissions) {
+    const refreshToken = randomBytes(32).toString('base64url');
+    await sessions.create({
+      id: randomUUID(),
+      accountId: account.id,
+      tokenHash: tokenHash(refreshToken),
+      expiresAt: refreshExpiry()
+    });
     return {
-      accessToken: token,
+      accessToken: createAccessToken(account, permissions),
+      refreshToken,
       tokenType: 'Bearer',
       expiresIn: config.jwt.expiresIn,
       account: {
@@ -37,6 +54,8 @@ export function createAuthService({ accounts, jwt, config }) {
   }
 
   return {
+    refreshExpiresIn: config.jwt.refreshExpiresIn,
+
     async login(username, password) {
       const account = await accounts.findByUsername(username);
       const validPassword = await bcrypt.compare(password, account?.password_hash || DUMMY_HASH);
@@ -63,6 +82,38 @@ export function createAuthService({ accounts, jwt, config }) {
         return null;
       }
       return createSession(account, await accounts.listPermissions(account.id));
+    },
+
+    async refresh(refreshToken) {
+      if (typeof refreshToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(refreshToken)) {
+        return null;
+      }
+      const previousHash = tokenHash(refreshToken);
+      const session = await sessions.findByTokenHash(previousHash);
+      if (!session || session.status !== 'active' || session.site_status !== 'active') {
+        return null;
+      }
+      const permissions = await accounts.listPermissions(session.account_id);
+      const nextRefreshToken = randomBytes(32).toString('base64url');
+      const rotated = await sessions.rotate({
+        sessionId: session.session_id,
+        tokenHash: previousHash,
+        nextTokenHash: tokenHash(nextRefreshToken),
+        expiresAt: refreshExpiry()
+      });
+      if (!rotated) return null;
+      return {
+        accessToken: createAccessToken(session, permissions),
+        refreshToken: nextRefreshToken,
+        tokenType: 'Bearer',
+        expiresIn: config.jwt.expiresIn
+      };
+    },
+
+    async revoke(refreshToken) {
+      if (typeof refreshToken === 'string' && /^[A-Za-z0-9_-]{43}$/.test(refreshToken)) {
+        await sessions.revoke(tokenHash(refreshToken));
+      }
     }
   };
 }

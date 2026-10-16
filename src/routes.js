@@ -3,6 +3,29 @@ import { randomUUID } from 'node:crypto';
 
 const siteTypes = new Set(['headquarters', 'direct', 'franchise']);
 const vehicleStatuses = new Set(['available', 'rented', 'maintenance', 'retired']);
+const refreshCookieNames = {
+  default: 'guts_erp_refresh',
+  site: 'guts_erp_site_refresh'
+};
+
+function getCookie(request, name) {
+  const cookieHeader = request.headers.cookie;
+  if (typeof cookieHeader !== 'string') return '';
+  const prefix = `${name}=`;
+  const cookie = cookieHeader.split(';').map((value) => value.trim())
+    .find((value) => value.startsWith(prefix));
+  return cookie?.slice(prefix.length) ?? '';
+}
+
+function setRefreshCookie(reply, request, name, token, maxAge) {
+  const secure = request.protocol === 'https' ? '; Secure' : '';
+  reply.header('Set-Cookie',
+    `${name}=${token}; HttpOnly; SameSite=Strict; Path=/api/v1/auth; Max-Age=${maxAge}${secure}`);
+}
+
+function clearRefreshCookie(reply, request, name) {
+  setRefreshCookie(reply, request, name, '', 0);
+}
 
 function isText(value, min, max) {
   return typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
@@ -856,7 +879,47 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
   }, async (request, reply) => {
     const result = await auth.login(request.body.username, request.body.password);
     if (!result) return reply.code(401).send({ error: 'invalid_credentials' });
-    return result;
+    await Promise.all(Object.values(refreshCookieNames)
+      .map((name) => auth.revoke(getCookie(request, name))));
+    setRefreshCookie(reply, request, refreshCookieNames.default,
+      result.refreshToken, auth.refreshExpiresIn);
+    const { refreshToken: _refreshToken, ...publicSession } = result;
+    return reply.header('Cache-Control', 'no-store').send(publicSession);
+  });
+
+  app.post('/api/v1/auth/refresh', {
+    config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+    schema: {
+      body: {
+        type: 'object', additionalProperties: false, required: ['context'],
+        properties: { context: { type: 'string', enum: ['default', 'site'] } }
+      }
+    }
+  }, async (request, reply) => {
+    const name = refreshCookieNames[request.body.context];
+    const result = await auth.refresh(getCookie(request, name));
+    if (!result) {
+      clearRefreshCookie(reply, request, name);
+      return reply.code(401).send({ error: 'unauthorized' });
+    }
+    setRefreshCookie(reply, request, name, result.refreshToken, auth.refreshExpiresIn);
+    const { refreshToken: _refreshToken, ...publicSession } = result;
+    return reply.header('Cache-Control', 'no-store').send(publicSession);
+  });
+
+  app.post('/api/v1/auth/end-site', async (request, reply) => {
+    await auth.revoke(getCookie(request, refreshCookieNames.site));
+    clearRefreshCookie(reply, request, refreshCookieNames.site);
+    return reply.code(204).send();
+  });
+
+  app.post('/api/v1/auth/logout', async (request, reply) => {
+    await Promise.all(Object.values(refreshCookieNames)
+      .map((name) => auth.revoke(getCookie(request, name))));
+    for (const name of Object.values(refreshCookieNames)) {
+      clearRefreshCookie(reply, request, name);
+    }
+    return reply.code(204).send();
   });
 
   app.post('/api/v1/auth/switch-site', {
@@ -870,7 +933,11 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
   }, async (request, reply) => {
     const session = await auth.switchToSite(request.body.siteId);
     if (!session) return reply.code(404).send({ error: 'account_unavailable' });
-    return reply.header('Cache-Control', 'no-store').send(session);
+    await auth.revoke(getCookie(request, refreshCookieNames.site));
+    setRefreshCookie(reply, request, refreshCookieNames.site,
+      session.refreshToken, auth.refreshExpiresIn);
+    const { refreshToken: _refreshToken, ...publicSession } = session;
+    return reply.header('Cache-Control', 'no-store').send(publicSession);
   });
 
   app.get('/api/v1/auth/me', {
