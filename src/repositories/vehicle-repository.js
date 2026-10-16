@@ -81,7 +81,7 @@ export function createVehicleRepository(db, parkingBoard) {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             vehicle.id, vehicle.registrationNumber, vehicle.vin || null,
-            vehicle.make, vehicle.model, vehicle.modelYear || null,
+            vehicle.make ?? '', vehicle.model ?? '', vehicle.modelYear || null,
             vehicle.siteId, vehicle.status || 'available'
           ]
         );

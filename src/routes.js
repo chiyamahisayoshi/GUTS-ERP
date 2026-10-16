@@ -1241,12 +1241,12 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
       body: {
         type: 'object',
         additionalProperties: false,
-        required: ['registrationNumber', 'make', 'model'],
+        required: ['registrationNumber'],
         properties: {
           registrationNumber: { type: 'string', minLength: 1, maxLength: 32 },
           vin: { type: ['string', 'null'], maxLength: 32 },
-          make: { type: 'string', minLength: 1, maxLength: 80 },
-          model: { type: 'string', minLength: 1, maxLength: 100 },
+          make: { type: 'string', maxLength: 80 },
+          model: { type: 'string', maxLength: 100 },
           modelYear: { type: 'integer', minimum: 1900, maximum: 2200 },
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
           status: { type: 'string', enum: [...vehicleStatuses] },
@@ -1311,6 +1311,8 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     try {
       vehicle = await vehicles.create({
         ...request.body,
+        make: request.body.make ?? '',
+        model: request.body.model ?? '',
         siteId,
         id: randomUUID()
       });
@@ -1342,8 +1344,8 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
         properties: {
           registrationNumber: { type: 'string', minLength: 1, maxLength: 32 },
           vin: { type: ['string', 'null'], maxLength: 32 },
-          make: { type: 'string', minLength: 1, maxLength: 80 },
-          model: { type: 'string', minLength: 1, maxLength: 100 },
+          make: { type: 'string', maxLength: 80 },
+          model: { type: 'string', maxLength: 100 },
           modelYear: { type: ['integer', 'null'], minimum: 1900, maximum: 2200 },
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
           status: { type: 'string', enum: [...vehicleStatuses] }
