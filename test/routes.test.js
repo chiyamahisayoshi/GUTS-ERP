@@ -14,6 +14,8 @@ async function makeApp(user) {
   const calls = {
     vehicleList: null, createdVehicle: null, reservationList: null,
     updatedVehicle: null, createdReservation: null, transitionedReservation: null, dashboardSiteScope: null,
+    customerList: null, createdCustomer: null, updatedCustomer: null,
+    reservationCatalogSiteScope: null, availableVehicleQuery: null,
     createdAccount: null, employeeList: null, createdEmployee: null, updatedEmployee: null,
     parkingSyncVehicles: null, parkingSyncResult: { created: 1, updated: 0, synced: 1 },
     parkingSyncError: null,
@@ -82,6 +84,14 @@ async function makeApp(user) {
     },
     reservations: {
       list: async (filters) => { calls.reservationList = filters; return []; },
+      vehicleCatalog: async (filters) => {
+        calls.reservationCatalogSiteScope = filters.siteId;
+        return { classes: [{ id: 1, name: 'A-1' }], options: [{ id: 1, name: '禁煙' }] };
+      },
+      listAvailableVehicles: async (filters) => {
+        calls.availableVehicleQuery = filters;
+        return [{ id: 'vehicle-uuid', registration_number: '品川500あ1234' }];
+      },
       create: async (reservation) => {
         calls.createdReservation = reservation;
         return { id: '1', reservationCode: 'ABC123', status: 'reserved' };
@@ -89,6 +99,20 @@ async function makeApp(user) {
       transition: async (reservation) => {
         calls.transitionedReservation = reservation;
         return reservation;
+      }
+    },
+    customers: {
+      list: async (filters) => {
+        calls.customerList = filters;
+        return [{ id: '71', site_id: filters.siteId, name: 'Guest', phone: '09012345678' }];
+      },
+      create: async (customer) => {
+        calls.createdCustomer = customer;
+        return { id: '71', ...customer };
+      },
+      update: async (customer) => {
+        calls.updatedCustomer = customer;
+        return { id: customer.customerId, ...customer };
       }
     },
     employees: {
@@ -1205,4 +1229,85 @@ test('parking status, class, and option catalogs share ERP parking admin permiss
     ['option', { siteId: '2', name: 'ETC' }],
     ['edit-class', { siteId: '2', classId: '41', name: 'A-3', color: '#ff0000' }]
   ]);
+});
+
+test('customer endpoints are permission-gated and limited to the signed-in site', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct',
+    permissions: ['customers:read', 'customers:write']
+  });
+  t.after(() => app.close());
+  const headers = { authorization: `Bearer ${token}` };
+  const list = await app.inject({
+    method: 'GET', url: '/api/v1/customers?search=Guest&limit=8', headers
+  });
+  assert.equal(list.statusCode, 200);
+  assert.equal(calls.customerList.siteId, '2');
+  assert.equal(calls.customerList.search, 'Guest');
+
+  const create = await app.inject({
+    method: 'POST', url: '/api/v1/customers', headers,
+    payload: { name: 'Guest', phone: '09012345678', address: 'Tokyo' }
+  });
+  assert.equal(create.statusCode, 201);
+  assert.equal(calls.createdCustomer.siteId, '2');
+  assert.equal(calls.createdCustomer.address, 'Tokyo');
+
+  const update = await app.inject({
+    method: 'PATCH', url: '/api/v1/customers/71', headers,
+    payload: { name: 'Guest Updated', phone: '09012345678', workplaceSchool: 'School' }
+  });
+  assert.equal(update.statusCode, 200);
+  assert.equal(calls.updatedCustomer.customerId, '71');
+  assert.equal(calls.updatedCustomer.siteId, '2');
+
+  const invalid = await app.inject({
+    method: 'POST', url: '/api/v1/customers', headers,
+    payload: { name: '   ', phone: '09012345678' }
+  });
+  assert.equal(invalid.statusCode, 422);
+
+  const forbidden = await makeApp({
+    sub: '15', siteId: '2', siteType: 'direct', permissions: []
+  });
+  t.after(() => forbidden.app.close());
+  const denied = await forbidden.app.inject({
+    method: 'GET', url: '/api/v1/customers', headers: { authorization: `Bearer ${forbidden.token}` }
+  });
+  assert.equal(denied.statusCode, 403);
+});
+
+test('reservation vehicle search and creation keep the account site scope', async (t) => {
+  const { app, token, calls } = await makeApp({
+    sub: '14', siteId: '2', siteType: 'direct',
+    permissions: ['reservations:read', 'reservations:write']
+  });
+  t.after(() => app.close());
+  const headers = { authorization: `Bearer ${token}` };
+  const catalog = await app.inject({
+    method: 'GET', url: '/api/v1/reservations/vehicle-catalog', headers
+  });
+  assert.equal(catalog.statusCode, 200);
+  assert.equal(calls.reservationCatalogSiteScope, '2');
+
+  const available = await app.inject({
+    method: 'GET',
+    url: '/api/v1/reservations/available-vehicles?startAt=2026-11-01T09%3A00%3A00.000Z&endAt=2026-11-02T09%3A00%3A00.000Z&vehicleClass=A-1&options=%E7%A6%81%E7%85%99',
+    headers
+  });
+  assert.equal(available.statusCode, 200);
+  assert.equal(calls.availableVehicleQuery.siteId, '2');
+  assert.deepEqual(calls.availableVehicleQuery.options, ['禁煙']);
+
+  const created = await app.inject({
+    method: 'POST', url: '/api/v1/reservations', headers,
+    payload: {
+      siteId: '99', customerId: '71', guestName: 'Guest', guestPhone: '09012345678',
+      startAt: '2026-11-01T09:00:00.000Z', endAt: '2026-11-02T09:00:00.000Z',
+      vehicleId: 'c9fca125-5f76-4d03-94a0-c5298398d003'
+    }
+  });
+  assert.equal(created.statusCode, 201);
+  assert.equal(calls.createdReservation.siteId, '2');
+  assert.equal(calls.createdReservation.customerId, '71');
 });

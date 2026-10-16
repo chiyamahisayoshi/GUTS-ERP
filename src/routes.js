@@ -122,7 +122,7 @@ function requireEmployeeManager(accounts) {
   };
 }
 
-export function registerRoutes(app, { accounts, admin, vehicles, reservations, employees, auth,
+export function registerRoutes(app, { accounts, admin, vehicles, reservations, customers, employees, auth,
   parkingBoard, parkingRealtime }, errorLogger, databaseHealth) {
   app.get('/health', async (_request, reply) => {
     try {
@@ -1445,6 +1445,138 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     return vehicle;
   });
 
+  const customerProperties = {
+    name: { type: 'string', minLength: 1, maxLength: 120 },
+    nameKana: { anyOf: [{ type: 'string', maxLength: 120 }, { type: 'null' }] },
+    phone: { type: 'string', minLength: 5, maxLength: 32 },
+    email: { anyOf: [{ type: 'string', format: 'email', maxLength: 254 }, { type: 'null' }] },
+    birthDate: { anyOf: [{ type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' }, { type: 'null' }] },
+    address: { anyOf: [{ type: 'string', maxLength: 500 }, { type: 'null' }] },
+    emergencyContactName: { anyOf: [{ type: 'string', maxLength: 120 }, { type: 'null' }] },
+    emergencyContactRelationship: { anyOf: [{ type: 'string', maxLength: 80 }, { type: 'null' }] },
+    emergencyContactPhone: { anyOf: [{ type: 'string', maxLength: 32 }, { type: 'null' }] },
+    workplaceSchool: { anyOf: [{ type: 'string', maxLength: 200 }, { type: 'null' }] }
+  };
+  const customerFields = (body) => ({
+    name: body.name.trim(),
+    nameKana: body.nameKana?.trim() || null,
+    phone: body.phone.trim(),
+    email: body.email?.trim() || null,
+    birthDate: body.birthDate || null,
+    address: body.address?.trim() || null,
+    emergencyContactName: body.emergencyContactName?.trim() || null,
+    emergencyContactRelationship: body.emergencyContactRelationship?.trim() || null,
+    emergencyContactPhone: body.emergencyContactPhone?.trim() || null,
+    workplaceSchool: body.workplaceSchool?.trim() || null
+  });
+
+  app.get('/api/v1/customers', {
+    preHandler: requirePermission('customers:read'),
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          search: { type: 'string', maxLength: 100 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 50 },
+          offset: { type: 'integer', minimum: 0, default: 0 }
+        }
+      }
+    }
+  }, async (request) => ({
+    items: await customers.list({
+      siteId: request.user.siteId,
+      search: request.query.search?.trim() || undefined,
+      limit: request.query.limit ?? 50,
+      offset: request.query.offset ?? 0
+    })
+  }));
+
+  app.post('/api/v1/customers', {
+    preHandler: requirePermission('customers:write'),
+    schema: {
+      body: {
+        type: 'object', additionalProperties: false, required: ['name', 'phone'],
+        properties: customerProperties
+      }
+    }
+  }, async (request, reply) => {
+    if (!request.body.name.trim() || request.body.phone.trim().length < 5 ||
+        !validDateOnly(request.body.birthDate)) {
+      return reply.code(422).send({ error: 'invalid_request' });
+    }
+    const customer = await customers.create({
+      siteId: request.user.siteId, ...customerFields(request.body)
+    });
+    return reply.code(201).send(customer);
+  });
+
+  app.patch('/api/v1/customers/:id', {
+    preHandler: requirePermission('customers:write'),
+    schema: {
+      params: {
+        type: 'object', required: ['id'],
+        properties: { id: { type: 'string', pattern: '^[1-9][0-9]*$' } }
+      },
+      body: {
+        type: 'object', additionalProperties: false, required: ['name', 'phone'],
+        properties: customerProperties
+      }
+    }
+  }, async (request, reply) => {
+    if (!request.body.name.trim() || request.body.phone.trim().length < 5 ||
+        !validDateOnly(request.body.birthDate)) {
+      return reply.code(422).send({ error: 'invalid_request' });
+    }
+    const customer = await customers.update({
+      siteId: request.user.siteId,
+      customerId: request.params.id,
+      ...customerFields(request.body)
+    });
+    if (!customer) return reply.code(404).send({ error: 'not_found' });
+    return customer;
+  });
+
+  app.get('/api/v1/reservations/vehicle-catalog', {
+    preHandler: requirePermission('reservations:write')
+  }, async (request) => reservations.vehicleCatalog({ siteId: request.user.siteId }));
+
+  app.get('/api/v1/reservations/available-vehicles', {
+    preHandler: requirePermission('reservations:write'),
+    schema: {
+      querystring: {
+        type: 'object', additionalProperties: false,
+        required: ['startAt', 'endAt', 'vehicleClass'],
+        properties: {
+          startAt: { type: 'string', format: 'date-time' },
+          endAt: { type: 'string', format: 'date-time' },
+          vehicleClass: { type: 'string', minLength: 1, maxLength: 120 },
+          options: {
+            anyOf: [
+              { type: 'string', maxLength: 120 },
+              { type: 'array', maxItems: 20, uniqueItems: true, items: { type: 'string', maxLength: 120 } }
+            ]
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const start = new Date(request.query.startAt);
+    const end = new Date(request.query.endAt);
+    if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start >= end) {
+      return reply.code(400).send({ error: 'invalid_reservation' });
+    }
+    const items = await reservations.listAvailableVehicles({
+      siteId: request.user.siteId,
+      startAt: start.toISOString().slice(0, 23).replace('T', ' '),
+      endAt: end.toISOString().slice(0, 23).replace('T', ' '),
+      vehicleClass: request.query.vehicleClass,
+      options: request.query.options === undefined
+        ? []
+        : Array.isArray(request.query.options) ? request.query.options : [request.query.options]
+    });
+    return { items };
+  });
+
   app.get('/api/v1/reservations', {
     preHandler: requirePermission('reservations:read'),
     schema: {
@@ -1478,6 +1610,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
         required: ['guestName', 'guestPhone', 'startAt', 'endAt', 'vehicleId'],
         properties: {
           siteId: { type: 'string', pattern: '^[1-9]\\d*$' },
+          customerId: { type: 'string', pattern: '^[1-9]\\d*$' },
           guestName: { type: 'string', minLength: 1, maxLength: 120 },
           guestPhone: { type: 'string', minLength: 5, maxLength: 32 },
           startAt: { type: 'string', format: 'date-time' },
@@ -1496,14 +1629,20 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
       return reply.code(400).send({ error: 'invalid_reservation' });
     }
     const asMysqlDateTime = (date) => date.toISOString().slice(0, 23).replace('T', ' ');
-    const reservation = await reservations.create({
-      ...request.body,
-      siteId,
-      startAt: asMysqlDateTime(start),
-      endAt: asMysqlDateTime(end),
-      createdBy: request.user.sub
-    });
-    return reply.code(201).send(reservation);
+    try {
+      const reservation = await reservations.create({
+        ...request.body,
+        siteId,
+        startAt: asMysqlDateTime(start),
+        endAt: asMysqlDateTime(end),
+        createdBy: request.user.sub
+      });
+      return reply.code(201).send(reservation);
+    } catch (error) {
+      if (error.code === 'ERP_CONFLICT') return reply.code(409).send({ error: 'reservation_conflict' });
+      if (error.code === 'ERP_INVALID_REFERENCE') return reply.code(422).send({ error: 'invalid_reference' });
+      throw error;
+    }
   });
 
   app.patch('/api/v1/reservations/:id', {

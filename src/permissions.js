@@ -8,5 +8,7 @@ export const PERMISSIONS = Object.freeze([
   { key: 'parking:write', description: 'Update vehicles, positions, jobs, and assessments on the parking board' },
   { key: 'parking:admin', description: 'Manage parking locations, statuses, vehicle classes, and logistics' },
   { key: 'reservations:read', description: 'View rental reservations and reception queue' },
-  { key: 'reservations:write', description: 'Create reservations and process vehicle handover or return' }
+  { key: 'reservations:write', description: 'Create reservations and process vehicle handover or return' },
+  { key: 'customers:read', description: 'View customer profiles within the assigned site' },
+  { key: 'customers:write', description: 'Create and update customer profiles within the assigned site' }
 ]);

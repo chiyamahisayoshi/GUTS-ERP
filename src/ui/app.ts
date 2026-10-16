@@ -113,6 +113,16 @@ type Reservation = {
   checked_out_by_name: string | null; returned_by_employee_id: string | null;
   returned_by_name: string | null;
 };
+type Customer = {
+  id: string; site_id: string; name: string; name_kana: string | null; phone: string;
+  email: string | null; birth_date: string | null; address: string | null;
+  emergency_contact_name: string | null; emergency_contact_relationship: string | null;
+  emergency_contact_phone: string | null; workplace_school: string | null;
+};
+type ReservationVehicle = {
+  id: string; registration_number: string; make: string; model: string;
+  vehicle_class: string; options: string[] | string; parking_lot_name: string | null;
+};
 type Profile = {
   id: string; username: string; displayName: string; isAdmin: boolean;
   site: Site; permissions: string[];
@@ -122,7 +132,7 @@ type Stats = {
   accounts: { total: number; active: number };
   vehicles: { total: number; available: number; rented: number; maintenance: number };
 };
-type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'vehicles' | 'parking';
+type Page = 'dashboard' | 'reservations' | 'sites' | 'accounts' | 'vehicles' | 'customers' | 'parking';
 
 const $ = <T extends HTMLElement>(selector: string, parent: ParentNode = document) =>
   parent.querySelector<T>(selector);
@@ -159,7 +169,8 @@ const icon = (name: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="cur
 
 const titles: Record<Page, string> = {
   dashboard: '運営ダッシュボード', reservations: '予約・受付', sites: '店舗管理',
-  accounts: '店舗アカウント', vehicles: '車両管理', parking: '駐車場管理'
+  accounts: '店舗アカウント', vehicles: '車両管理', customers: 'お客様管理',
+  parking: '駐車場管理'
 };
 const statusLabel: Record<string, string> = {
   active: '有効', disabled: '無効', inactive: '無効', available: '貸出可能', rented: '貸出中',
@@ -214,7 +225,7 @@ let token = localStorage.getItem(SESSION_TOKEN_KEY) || '';
 let profile: Profile | null = null;
 let language: Language = 'ja';
 const PAGE_STORAGE_KEY = 'guts_erp_current_page';
-const appPages: Page[] = ['dashboard', 'reservations', 'sites', 'accounts', 'vehicles', 'parking'];
+const appPages: Page[] = ['dashboard', 'reservations', 'sites', 'accounts', 'vehicles', 'customers', 'parking'];
 function pageFromHash(): Page | null {
   const page = location.hash.slice(1);
   return appPages.includes(page as Page)
@@ -235,6 +246,11 @@ let cachedPermissions: Permission[] = [];
 let currentEmployees: Employee[] = [];
 let employeeSiteId = '';
 let currentReservations: Reservation[] = [];
+let currentCustomers: Customer[] = [];
+let currentCustomerMatches: Customer[] = [];
+let customerSearchTimer = 0;
+let customerSearchRequest = 0;
+let availableVehicleRequest = 0;
 let pendingReservationTransition: {
   reservation: Reservation; status: 'checked_in' | 'completed';
 } | null = null;
@@ -421,6 +437,7 @@ function navItems(): { page: Page; title: string; icon: string; permission?: str
     { page: 'reservations', title: '予約・受付', icon: 'calendar', permission: 'reservations:read' },
     { page: 'sites', title: '店舗管理', icon: 'site', permission: 'sites:read' },
     { page: 'vehicles', title: '車両管理', icon: 'vehicle', permission: 'vehicles:read' },
+    { page: 'customers', title: 'お客様管理', icon: 'people', permission: 'customers:read' },
     { page: 'parking', title: '駐車場管理', icon: 'parking', permission: 'parking:read' }
   ];
   if (profile?.isAdmin) items.splice(3, 0, {
@@ -563,6 +580,7 @@ async function loadPage() {
       case 'sites': await renderSites(); break;
       case 'accounts': await renderAccounts(); break;
       case 'vehicles': await renderVehicles(); break;
+      case 'customers': await renderCustomers(); break;
       case 'parking': await renderParkingBoard(); break;
     }
   } catch (error) {
@@ -688,7 +706,9 @@ function permissionChecks(selected: string[] = []) {
     'parking:read': '駐車場ボードの閲覧', 'parking:write': '駐車場ボードの操作',
     'parking:admin': '駐車場ボードの設定管理',
     'reservations:read': '予約・受付情報の閲覧',
-    'reservations:write': '予約の作成、貸出・返却手続き'
+    'reservations:write': '予約の作成、貸出・返却手続き',
+    'customers:read': 'お客様情報の閲覧',
+    'customers:write': 'お客様情報の管理'
   };
   const descriptions: Record<string, string> = {
     'sites:read': '店舗情報の閲覧', 'sites:write': '店舗情報の作成・管理',
@@ -696,7 +716,9 @@ function permissionChecks(selected: string[] = []) {
     'parking:read': '駐車場ボードの閲覧', 'parking:write': '車両位置・業務状況の更新',
     'parking:admin': '駐車場・クラス・状態などの設定管理',
     'reservations:read': '予約情報と受付状況の閲覧',
-    'reservations:write': '予約の作成、貸出・返却手続き'
+    'reservations:write': '予約の作成、貸出・返却手続き',
+    'customers:read': '店舗内のお客様情報の閲覧',
+    'customers:write': '店舗内のお客様情報の作成・更新'
   };
   return `<div class="check-grid">${cachedPermissions.filter(({ permission_key }) => permission_key !== 'accounts:write').map((permission) => `<label class="check-item"><input type="checkbox" name="permissions" value="${text(permission.permission_key)}" ${selected.includes(permission.permission_key) ? 'checked' : ''}><span>${permissionNames[permission.permission_key] ?? 'その他の権限'}<small>${descriptions[permission.permission_key] ?? '権限の説明はありません'}</small></span></label>`).join('')}</div>`;
 }
@@ -724,6 +746,22 @@ async function renderVehicles() {
   setContent(`${pageHead('車両管理', '車両情報と稼働状況を管理', actions)}
     ${renderToolbar('ナンバープレート、メーカー、車種で検索', filter)}
     ${pageTable(['車両 / ナンバープレート', '所属店舗', '状態', '操作'], rows, '車両が見つかりません')}
+    ${pagination(result.items.length)}`);
+}
+async function renderCustomers() {
+  const params = new URLSearchParams({ limit: '50', offset: String(offset) });
+  if (query) params.set('search', query);
+  const result = await api<{ items: Customer[] }>(`/api/v1/customers?${params}`);
+  currentCustomers = result.items;
+  const rows = result.items.map((customer) => `<tr>
+    <td class="primary-cell" data-label="お客様">${text(customer.name)}${customer.name_kana ? `<span class="secondary">${text(customer.name_kana)}</span>` : ''}</td>
+    <td data-label="電話番号">${text(customer.phone)}</td>
+    <td data-label="勤務先・学校">${text(customer.workplace_school ?? '—')}</td>
+    <td data-label="操作">${can('customers:write') ? `<button class="btn btn-sm" data-action="edit-customer" data-id="${text(customer.id)}">編集</button>` : ''}</td>
+  </tr>`).join('');
+  setContent(`${pageHead('お客様管理', 'お客様の基本情報と連絡先を管理', can('customers:write') ? `<button class="btn btn-primary" data-modal="customer">${icon('plus')} お客様を追加</button>` : '')}
+    ${renderToolbar('氏名、フリガナ、電話番号で検索')}
+    ${pageTable(['お客様名', '電話番号', '勤務先・学校', '操作'], rows, 'お客様情報はありません')}
     ${pagination(result.items.length)}`);
 }
 function renderParkingCatalog(board: ParkingBootstrap) {
@@ -1474,6 +1512,27 @@ async function openModal(which: string, id = '') {
         ${field('password', 'パスワードを再設定（任意）', 'password', '', '空欄の場合は変更しません')}
         <div class="field full"><span class="field-label">利用権限</span>${permissionChecks(jsonArray(account.permissions))}</div>
       </div>`, 'edit-account');
+    } else if (which === 'customer' || which === 'edit-customer') {
+      const customer = which === 'edit-customer'
+        ? currentCustomers.find((item) => item.id === id)
+        : undefined;
+      if (which === 'edit-customer' && !customer) throw new Error('not_found');
+      modalTemplate(customer ? 'お客様情報を編集' : 'お客様を追加',
+        '予約作成時に氏名や電話番号から検索できます。住所などは任意です。', `
+          ${customer ? `<input type="hidden" name="id" value="${text(customer.id)}">` : ''}
+          <div class="form-grid">
+            ${field('name', '氏名', 'text', customer?.name ?? '', '氏名を入力してください', true)}
+            ${field('nameKana', 'フリガナ', 'text', customer?.name_kana ?? '', 'フリガナ（任意）')}
+            ${field('phone', '電話番号', 'tel', customer?.phone ?? '', '電話番号を入力してください', true)}
+            ${field('email', 'メールアドレス', 'email', customer?.email ?? '', '任意')}
+            ${field('birthDate', '生年月日', 'date', dateInputValue(customer?.birth_date))}
+            ${field('workplaceSchool', 'お勤め先・学校', 'text', customer?.workplace_school ?? '', '任意')}
+            ${field('address', '住所', 'text', customer?.address ?? '', '任意', false, 'full')}
+            <div class="field full"><span class="field-label">緊急連絡先（任意）</span></div>
+            ${field('emergencyContactName', '氏名', 'text', customer?.emergency_contact_name ?? '', '任意')}
+            ${field('emergencyContactRelationship', '続柄', 'text', customer?.emergency_contact_relationship ?? '', '任意')}
+            ${field('emergencyContactPhone', '電話番号', 'tel', customer?.emergency_contact_phone ?? '', '任意', false, 'full')}
+          </div>`, customer ? 'edit-customer' : 'customer');
     } else if (which === 'employee-edit') {
       const employee = currentEmployees.find((item) => item.id === id);
       if (!employee) throw new Error('not_found');
@@ -1521,20 +1580,27 @@ async function openModal(which: string, id = '') {
       const defaultStart = new Date(Date.now() + 30 * 60_000);
       const defaultEnd = new Date(defaultStart.getTime() + 24 * 60 * 60_000);
       const localDate = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-      const bookingSite = profile!.site.id;
-      const scope = `&siteId=${encodeURIComponent(bookingSite)}`;
-      const vehicles = await api<{ items: Vehicle[] }>(`/api/v1/vehicles?status=available&limit=100${scope}`);
-      const vehicleOptions = vehicles.items.map((vehicle) => `<option value="${text(vehicle.id)}">${text(vehicle.registration_number)} · ${text(vehicle.make)} ${text(vehicle.model)}</option>`).join('');
+      const catalog = await api<{ classes: ParkingClass[]; options: { id: number; name: string }[] }>(
+        '/api/v1/reservations/vehicle-catalog'
+      );
       const siteField = profile!.site.type === 'headquarters'
         ? `<input type="hidden" name="siteId" value="${text(profile!.site.id)}">`
         : '';
       modalTemplate('予約を作成', 'お客様と利用期間を登録します', `<div class="form-grid">
-        ${field('guestName', 'お客様の氏名', 'text', '', '氏名を入力してください', true)}
-        ${field('guestPhone', '電話番号', 'tel', '', '電話番号を入力してください', true)}
+        <input type="hidden" name="customerId">
+        <label class="field"><span class="field-label">お客様の氏名</span><input name="guestName" type="text" placeholder="氏名・フリガナで検索" data-customer-search required></label>
+        <label class="field"><span class="field-label">電話番号</span><input name="guestPhone" type="tel" placeholder="電話番号で検索" data-customer-search required></label>
+        <div class="customer-suggestions field full" data-customer-suggestions aria-live="polite"></div>
         ${field('startAt', '貸出予定日時', 'datetime-local', localDate(defaultStart), '', true)}
         ${field('endAt', '返却予定日時', 'datetime-local', localDate(defaultEnd), '', true)}
         ${siteField}
-        ${selectField('vehicleId', '車両の予約', `<option value="">貸出可能な車両を選択してください</option>${vehicleOptions}`)}
+        ${selectField('vehicleClass', '希望クラス', `<option value="">クラスを選択してください</option>${catalog.classes.map((item) => `<option value="${text(item.name)}">${text(item.name)}</option>`).join('')}`)}
+        <fieldset class="reservation-options field full"><legend class="field-label">車両の希望条件（任意）</legend>
+          ${catalog.options.map((option) => `<label class="check-item"><input type="checkbox" name="reservationOptions" value="${text(option.name)}" data-reservation-filter><span>${text(option.name)}</span></label>`).join('') || '<span class="secondary">選択できる条件はありません</span>'}
+        </fieldset>
+        <fieldset class="available-vehicles field full"><legend class="field-label">空き車両</legend>
+          <div data-available-vehicles role="status" aria-live="polite">利用日時、希望クラスを選択すると空き車両が表示されます。</div>
+        </fieldset>
       </div>`, 'reservation', '予約を保存');
     } else if (which === 'parking-lot-layout') {
       const lot = currentParkingBoard?.parking_lots.find((item) => String(item.id) === id);
@@ -1559,6 +1625,81 @@ async function loadSitesIfMissing() {
 }
 function checkedValues(form: HTMLFormElement, name: string) {
   return [...form.querySelectorAll<HTMLInputElement>(`input[name="${name}"]:checked`)].map((item) => item.value);
+}
+async function searchReservationCustomers(input: HTMLInputElement) {
+  const form = input.closest<HTMLFormElement>('form[data-form="reservation"]');
+  const suggestions = $('[data-customer-suggestions]', form ?? document);
+  if (!form || !suggestions) return;
+  const term = input.value.trim();
+  const requestId = ++customerSearchRequest;
+  form.dataset.customerRequestId = String(requestId);
+  const customerId = $<HTMLInputElement>('[name="customerId"]', form);
+  if (customerId) customerId.value = '';
+  if (!term) {
+    currentCustomerMatches = [];
+    setHtml(suggestions, '');
+    return;
+  }
+  setHtml(suggestions, '<span class="secondary">お客様情報を検索しています…</span>');
+  try {
+    const response = await api<{ items: Customer[] }>(
+      `/api/v1/customers?${new URLSearchParams({ search: term, limit: '8' })}`
+    );
+    if (!document.body.contains(form) || input.value.trim() !== term ||
+        form.dataset.customerRequestId !== String(requestId)) return;
+    currentCustomerMatches = response.items;
+    setHtml(suggestions, response.items.length
+      ? `<span class="field-label">登録済みのお客様</span><div class="customer-suggestion-list">${response.items.map((customer) =>
+        `<button type="button" class="customer-suggestion" data-action="customer-select" data-id="${text(customer.id)}">
+          <strong>${text(customer.name)}</strong>${customer.name_kana ? `<span>${text(customer.name_kana)}</span>` : ''}
+          <small>${text(customer.phone)}</small></button>`
+      ).join('')}</div>`
+      : '<span class="secondary">該当するお客様はいません。予約保存時に氏名と電話番号で新規登録します。</span>');
+  } catch (error) {
+    if (!document.body.contains(form) || form.dataset.customerRequestId !== String(requestId)) return;
+    setHtml(suggestions, `<span class="field-error">${text(humanError((error as Error).message))}</span>`);
+    toast(humanError((error as Error).message), true);
+  }
+}
+async function refreshReservationVehicles(form: HTMLFormElement) {
+  const output = $('[data-available-vehicles]', form);
+  if (!output) return;
+  const requestId = ++availableVehicleRequest;
+  form.dataset.vehicleRequestId = String(requestId);
+  const selectedVehicleId = $<HTMLInputElement>('[name="vehicleId"]:checked', form)?.value ?? '';
+  const values = new FormData(form);
+  const vehicleClass = String(values.get('vehicleClass') ?? '').trim();
+  const startAt = new Date(String(values.get('startAt') ?? ''));
+  const endAt = new Date(String(values.get('endAt') ?? ''));
+  if (!vehicleClass || !Number.isFinite(startAt.getTime()) ||
+      !Number.isFinite(endAt.getTime()) || startAt >= endAt) {
+    setHtml(output, '利用日時、希望クラスを選択すると空き車両が表示されます。');
+    return;
+  }
+  setHtml(output, '<span class="secondary">条件に合う空き車両を検索しています…</span>');
+  const params = new URLSearchParams({
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+    vehicleClass
+  });
+  checkedValues(form, 'reservationOptions').forEach((option) => params.append('options', option));
+  try {
+    const response = await api<{ items: ReservationVehicle[] }>(
+      `/api/v1/reservations/available-vehicles?${params}`
+    );
+    if (!document.body.contains(form) || form.dataset.vehicleRequestId !== String(requestId)) return;
+    setHtml(output, response.items.length
+      ? `<div class="available-vehicle-list">${response.items.map((vehicle) => `<label class="available-vehicle">
+          <input type="radio" name="vehicleId" value="${text(vehicle.id)}" required ${vehicle.id === selectedVehicleId ? 'checked' : ''}>
+          <span><strong>${text(vehicle.registration_number)} · ${text(vehicle.vehicle_class)}</strong>
+          <small>${text([vehicle.make, vehicle.model].filter(Boolean).join(' '))} · ${text(vehicle.parking_lot_name ?? '未配置')}</small></span>
+        </label>`).join('')}</div>`
+      : '<span class="secondary">条件に合う空き車両はありません。</span>');
+  } catch (error) {
+    if (!document.body.contains(form) || form.dataset.vehicleRequestId !== String(requestId)) return;
+    setHtml(output, `<span class="field-error">${text(humanError((error as Error).message))}</span>`);
+    toast(humanError((error as Error).message), true);
+  }
 }
 function closeParkingInspection() {
   parkingInspection?.dispose();
@@ -1845,6 +1986,25 @@ async function handleSubmit(event: Event) {
       toast('スタッフ名を更新しました。');
       await openEmployeeRoster(siteId);
       return;
+    } else if (kind === 'customer' || kind === 'edit-customer') {
+      const customerPayload = {
+        name: value('name'),
+        nameKana: value('nameKana') || null,
+        phone: value('phone'),
+        email: value('email') || null,
+        birthDate: value('birthDate') || null,
+        address: value('address') || null,
+        emergencyContactName: value('emergencyContactName') || null,
+        emergencyContactRelationship: value('emergencyContactRelationship') || null,
+        emergencyContactPhone: value('emergencyContactPhone') || null,
+        workplaceSchool: value('workplaceSchool') || null
+      };
+      await api(kind === 'customer'
+        ? '/api/v1/customers'
+        : `/api/v1/customers/${encodeURIComponent(value('id'))}`, {
+        method: kind === 'customer' ? 'POST' : 'PATCH',
+        body: JSON.stringify(customerPayload)
+      });
     } else if (kind === 'reservation-transition') {
       await api(`/api/v1/reservations/${encodeURIComponent(value('id'))}`, {
         method: 'PATCH',
@@ -1902,6 +2062,7 @@ async function handleSubmit(event: Event) {
         guestName: value('guestName'), guestPhone: value('guestPhone'),
         startAt: startAt.toISOString(), endAt: endAt.toISOString(), vehicleId: value('vehicleId')
       };
+      if (value('customerId')) payload.customerId = value('customerId');
       if (profile!.site.type === 'headquarters') payload.siteId = value('siteId');
       await api('/api/v1/reservations', { method: 'POST', body: JSON.stringify(payload) });
     } else if (kind === 'parking-vehicle') {
@@ -2128,6 +2289,26 @@ async function handleClick(event: MouseEvent) {
   if (!target) return;
   if (target.dataset.language === 'ja' || target.dataset.language === 'zh') {
     await changeLanguage(target.dataset.language);
+  } else if (target.dataset.action === 'customer-select') {
+    const customer = currentCustomerMatches.find((item) => item.id === target.dataset.id);
+    const form = target.closest<HTMLFormElement>('form[data-form="reservation"]');
+    if (!customer || !form) return;
+    const customerId = $<HTMLInputElement>('[name="customerId"]', form);
+    const name = $<HTMLInputElement>('[name="guestName"]', form);
+    const phone = $<HTMLInputElement>('[name="guestPhone"]', form);
+    const suggestions = $('[data-customer-suggestions]', form);
+    if (customerId) customerId.value = customer.id;
+    if (name) name.value = customer.name;
+    if (phone) phone.value = customer.phone;
+    if (suggestions) setHtml(suggestions,
+      `<span class="customer-selected"><strong>${text(customer.name)}</strong> · ${text(customer.phone)}
+        <button type="button" class="btn btn-sm btn-quiet" data-action="customer-clear-selection">選択解除</button></span>`);
+  } else if (target.dataset.action === 'customer-clear-selection') {
+    const form = target.closest<HTMLFormElement>('form[data-form="reservation"]');
+    const customerId = form && $<HTMLInputElement>('[name="customerId"]', form);
+    if (customerId) customerId.value = '';
+    const searchInput = form && $<HTMLInputElement>('[name="guestName"]', form);
+    if (searchInput) void searchReservationCustomers(searchInput);
   } else if (target.dataset.page) {
     event.preventDefault();
     closeParkingInspection();
@@ -2374,6 +2555,16 @@ async function handleClick(event: MouseEvent) {
 }
 function handleInput(event: Event) {
   if (!(event.target instanceof HTMLInputElement)) return;
+  if (event.target.matches('[data-customer-search]')) {
+    const form = event.target.closest<HTMLFormElement>('form[data-form="reservation"]');
+    const customerId = form && $<HTMLInputElement>('[name="customerId"]', form);
+    if (customerId) customerId.value = '';
+    window.clearTimeout(customerSearchTimer);
+    customerSearchTimer = window.setTimeout(() => {
+      void searchReservationCustomers(event.target as HTMLInputElement);
+    }, 220);
+    return;
+  }
   if (event.target.matches('[data-parking-search]')) {
     parkingCatalogQuery = event.target.value.trim();
     const content = $('#parking-catalog-content');
@@ -2401,7 +2592,8 @@ function handleInput(event: Event) {
   const render = currentPage === 'sites' ? renderSites
     : currentPage === 'accounts' ? renderAccounts
       : currentPage === 'vehicles' ? renderVehicles
-        : currentPage === 'reservations' ? renderReservations : null;
+        : currentPage === 'reservations' ? renderReservations
+          : currentPage === 'customers' ? renderCustomers : null;
   if (!render) return;
   window.clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
@@ -2414,7 +2606,13 @@ function handleInput(event: Event) {
 }
 function handleChange(event: Event) {
   const target = event.target as HTMLSelectElement;
-  if (target.matches('[data-vehicle-site]')) {
+  if (target.matches('[data-reservation-filter]')) {
+    const form = target.closest<HTMLFormElement>('form[data-form="reservation"]');
+    if (form) void refreshReservationVehicles(form);
+  } else if (target.matches('[name="startAt"], [name="endAt"], [name="vehicleClass"]')) {
+    const form = target.closest<HTMLFormElement>('form[data-form="reservation"]');
+    if (form) void refreshReservationVehicles(form);
+  } else if (target.matches('[data-vehicle-site]')) {
     const parkingFields = $('[data-vehicle-parking-fields]', $('.overlay')!);
     if (!parkingFields) return;
     const selectedSiteId = target.value;
@@ -2423,19 +2621,6 @@ function handleChange(event: Event) {
     else renderVehicleParkingCatalog(parkingFields, null);
   } else if (target.matches('[data-status]')) {
     statusFilter = target.value; offset = 0; void loadPage();
-  } else if (target.matches('[data-reservation-site]')) {
-    const vehicleSelect = $('[name="vehicleId"]', $('.overlay')!);
-    if (!vehicleSelect) return;
-    setHtml(vehicleSelect, '<option value="">車両を読み込み中…</option>');
-    vehicleSelect.setAttribute('disabled', 'true');
-    void api<{ items: Vehicle[] }>(`/api/v1/vehicles?${new URLSearchParams({
-      status: 'available', limit: '100', siteId: target.value
-    })}`).then((response) => {
-      setHtml(vehicleSelect, `<option value="">貸出可能な車両を選択してください</option>${response.items.map((vehicle) => `<option value="${text(vehicle.id)}">${text(vehicle.registration_number)} · ${text(vehicle.make)} ${text(vehicle.model)}</option>`).join('')}`);
-    }).catch((error) => {
-      setHtml(vehicleSelect, '<option value="">車両を読み込めませんでした。店舗を選択し直してください。</option>');
-      toast(humanError((error as Error).message), true);
-    }).finally(() => vehicleSelect.removeAttribute('disabled'));
   }
 }
 

@@ -6,6 +6,48 @@ function conflict(message) {
 
 export function createReservationRepository(db) {
   return {
+    async vehicleCatalog({ siteId }) {
+      const [classes, options] = await Promise.all([
+        db.query(
+          `SELECT id, name, color, display_order
+             FROM parking_vehicle_classes WHERE site_id = ? ORDER BY display_order, id`,
+          [siteId]
+        ),
+        db.query(
+          `SELECT id, name FROM parking_vehicle_option_types WHERE site_id = ? ORDER BY id`,
+          [siteId]
+        )
+      ]);
+      return { classes, options };
+    },
+
+    async listAvailableVehicles({ siteId, startAt, endAt, vehicleClass, options = [] }) {
+      const params = [siteId, vehicleClass, endAt, startAt];
+      const optionFilters = options.map(() => 'JSON_CONTAINS(p.options, JSON_QUOTE(?))');
+      params.push(...options);
+      return db.query(
+        `SELECT v.id, v.registration_number, v.make, v.model,
+                p.vehicle_type AS vehicle_class, p.options, l.name AS parking_lot_name
+           FROM vehicles v
+           JOIN parking_vehicles p
+             ON p.site_id = v.site_id AND p.erp_vehicle_id = v.id
+           JOIN parking_vehicle_classes c
+             ON c.site_id = p.site_id AND c.name = p.vehicle_type
+           LEFT JOIN parking_lots l
+             ON l.id = p.parking_lot_id AND l.site_id = p.site_id
+          WHERE v.site_id = ? AND v.status = 'available' AND c.name = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM reservations r
+               WHERE r.vehicle_id = v.id AND r.status IN ('reserved', 'checked_in')
+                 AND r.start_at < ? AND r.end_at > ?
+            )
+            ${optionFilters.length ? `AND ${optionFilters.join(' AND ')}` : ''}
+          ORDER BY v.registration_number, v.id
+          LIMIT 200`,
+        params
+      );
+    },
+
     async list({ siteId, status, search, limit, offset }) {
       const filters = [];
       const params = [];
@@ -24,7 +66,7 @@ export function createReservationRepository(db) {
       }
       const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
       return db.query(
-        `SELECT r.id, r.reservation_code, r.site_id, s.code AS site_code, s.name AS site_name,
+        `SELECT r.id, r.reservation_code, r.site_id, r.customer_id, s.code AS site_code, s.name AS site_name,
                 r.guest_name, r.guest_phone, r.start_at, r.end_at, r.vehicle_id,
                 v.registration_number, v.make, v.model, r.status, r.created_at,
                 r.checked_out_by_employee_id, r.checked_out_by_name,
@@ -39,8 +81,26 @@ export function createReservationRepository(db) {
       );
     },
 
-    async create({ siteId, guestName, guestPhone, startAt, endAt, vehicleId, createdBy }) {
+    async create({ siteId, customerId, guestName, guestPhone, startAt, endAt, vehicleId, createdBy }) {
       return db.transaction(async (tx) => {
+        let customer;
+        if (customerId) {
+          [customer] = await tx.query(
+            'SELECT id, name, phone FROM customers WHERE id = ? AND site_id = ? FOR UPDATE',
+            [customerId, siteId]
+          );
+          if (!customer) {
+            throw Object.assign(new Error('Customer is not available at this site.'), {
+              code: 'ERP_INVALID_REFERENCE'
+            });
+          }
+        } else {
+          const result = await tx.query(
+            'INSERT INTO customers (site_id, name, phone) VALUES (?, ?, ?)',
+            [siteId, guestName, guestPhone]
+          );
+          customer = { id: result.insertId, name: guestName, phone: guestPhone };
+        }
         const [vehicle] = await tx.query(
           'SELECT id, site_id, status FROM vehicles WHERE id = ? FOR UPDATE',
           [vehicleId]
@@ -58,11 +118,14 @@ export function createReservationRepository(db) {
         const code = randomBytes(6).toString('hex').toUpperCase();
         const result = await tx.query(
           `INSERT INTO reservations
-            (reservation_code, site_id, guest_name, guest_phone, start_at, end_at, vehicle_id, created_by)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [code, siteId, guestName, guestPhone, startAt, endAt, vehicleId || null, createdBy]
+            (reservation_code, site_id, customer_id, guest_name, guest_phone, start_at, end_at, vehicle_id, created_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [code, siteId, customer.id, customer.name, customer.phone, startAt, endAt, vehicleId || null, createdBy]
         );
-        return { id: String(result.insertId), reservationCode: code, status: 'reserved' };
+        return {
+          id: String(result.insertId), reservationCode: code, status: 'reserved',
+          customerId: String(customer.id)
+        };
       });
     },
 
