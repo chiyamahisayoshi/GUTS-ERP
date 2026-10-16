@@ -86,3 +86,58 @@ test('login for an unknown account still performs a password hash comparison', a
   });
   assert.equal(await auth.login('missing-user', 'some password'), null);
 });
+
+test('site switching issues only the active store account scope and permissions', async () => {
+  let claims;
+  const storeAccount = {
+    id: '14', site_id: '2', username: 'tokyo', display_name: 'Tokyo',
+    is_owner_admin: 0, status: 'active', site_code: 'TOKYO',
+    site_type: 'direct', site_status: 'active', site_name: 'Tokyo'
+  };
+  const auth = createAuthService({
+    accounts: {
+      findActiveBySiteId: async (siteId) => siteId === '2' ? storeAccount : null,
+      listPermissions: async (id) => id === '14' ? ['vehicles:read'] : []
+    },
+    jwt: {
+      sign: (payload, options) => {
+        claims = { payload, options };
+        return 'store-token';
+      }
+    },
+    config: { jwt: { issuer: 'erp', audience: 'guts-parking', expiresIn: 3600 } }
+  });
+
+  const session = await auth.switchToSite('2');
+  assert.equal(session.accessToken, 'store-token');
+  assert.equal(session.account.isAdmin, false);
+  assert.equal(session.account.site.id, '2');
+  assert.deepEqual(claims.payload, {
+    sub: '14', username: 'tokyo', siteId: '2', siteCode: 'TOKYO',
+    siteType: 'direct', permissions: ['vehicles:read']
+  });
+  assert.equal(claims.options.expiresIn, 3600);
+});
+
+test('site switching refuses disabled, headquarters, and owner-admin accounts', async () => {
+  let account = {
+    id: '14', site_id: '2', username: 'tokyo', display_name: 'Tokyo',
+    is_owner_admin: 0, status: 'active', site_code: 'TOKYO',
+    site_type: 'direct', site_status: 'active', site_name: 'Tokyo'
+  };
+  const auth = createAuthService({
+    accounts: {
+      findActiveBySiteId: async () => account,
+      listPermissions: async () => []
+    },
+    jwt: { sign: () => assert.fail('must not issue a token') },
+    config: { jwt: { issuer: 'erp', audience: 'guts-parking', expiresIn: 3600 } }
+  });
+
+  account = { ...account, status: 'disabled' };
+  assert.equal(await auth.switchToSite('2'), null);
+  account = { ...account, status: 'active', site_type: 'headquarters' };
+  assert.equal(await auth.switchToSite('2'), null);
+  account = { ...account, site_type: 'direct', is_owner_admin: 1 };
+  assert.equal(await auth.switchToSite('2'), null);
+});

@@ -125,10 +125,10 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
   }, async (request, reply) => {
     let siteId = request.user.siteId;
     if (request.user.siteType === 'headquarters') {
-      siteId = request.query.siteId;
-      if (!siteId) return reply.code(400).send({ error: 'site_required' });
+      siteId = request.query.siteId || siteId;
       const [site] = await admin.listSites(siteId);
-      if (!site || site.type === 'headquarters' || site.status !== 'active') {
+      if (!site || site.status !== 'active' ||
+          site.type === 'headquarters' && String(site.id) !== String(request.user.siteId)) {
         return reply.code(404).send({ error: 'invalid_site' });
       }
     }
@@ -859,6 +859,20 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     return result;
   });
 
+  app.post('/api/v1/auth/switch-site', {
+    preHandler: requireOwnerAdmin(accounts),
+    schema: {
+      body: {
+        type: 'object', additionalProperties: false, required: ['siteId'],
+        properties: { siteId: { type: 'string', pattern: '^[1-9]\\d*$' } }
+      }
+    }
+  }, async (request, reply) => {
+    const session = await auth.switchToSite(request.body.siteId);
+    if (!session) return reply.code(404).send({ error: 'account_unavailable' });
+    return reply.header('Cache-Control', 'no-store').send(session);
+  });
+
   app.get('/api/v1/auth/me', {
     preHandler: async (request) => request.jwtVerify()
   }, async (request, reply) => {
@@ -884,11 +898,14 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
 
   app.get('/api/v1/sites', {
     preHandler: requirePermission('sites:read')
-  }, async (request) => ({
-    items: await admin.listSites(
+  }, async (request) => {
+    const items = await admin.listSites(
       request.user.siteType === 'headquarters' ? undefined : request.user.siteId
-    )
-  }));
+    );
+    const account = await accounts.findById(request.user.sub);
+    if (Number(account?.is_owner_admin) === 1) return { items };
+    return { items: items.map(({ has_active_account: _hasActiveAccount, ...site }) => site) };
+  });
 
   app.post('/api/v1/sites', {
     preHandler: requirePermission('sites:write', { headquartersOnly: true })
@@ -1220,7 +1237,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
       return reply.code(422).send({ error: 'invalid_reference' });
     }
     const siteId = request.user.siteType === 'headquarters'
-      ? request.body.siteId
+      ? request.body.siteId || request.user.siteId
       : request.user.siteId;
     if (!siteId) return reply.code(400).send({ error: 'site_required' });
     let vehicle;
@@ -1322,7 +1339,7 @@ export function registerRoutes(app, { accounts, admin, vehicles, reservations, e
     }
   }, async (request, reply) => {
     const siteId = request.user.siteType === 'headquarters'
-      ? request.body.siteId
+      ? request.body.siteId || request.user.siteId
       : request.user.siteId;
     const start = new Date(request.body.startAt);
     const end = new Date(request.body.endAt);
